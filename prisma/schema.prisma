@@ -1,0 +1,162 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  username      String    @unique
+  email         String?   @unique
+  password      String
+  role          UserRole  @default(VIEWER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastLoginAt   DateTime?
+  
+  // Notification settings
+  notificationSettings NotificationSettings?
+  
+  @@map("users")
+}
+
+model NotificationSettings {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Push notifications
+  pushEnabled     Boolean  @default(true)
+  pushEndpoint    String?
+  pushKeys        Json?
+  
+  // Pushover notifications
+  pushoverEnabled Boolean  @default(false)
+  pushoverToken   String?
+  pushoverUser    String?
+  
+  // Alert preferences
+  highCurrentAlert     Boolean @default(true)
+  lowPressureAlert     Boolean @default(true)
+  lowTemperatureAlert  Boolean @default(true)
+  sensorErrorAlert     Boolean @default(true)
+  missingDataAlert     Boolean @default(true)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@map("notification_settings")
+}
+
+model SensorData {
+  id            String   @id @default(cuid())
+  device        String
+  location      String
+  timestamp     DateTime
+  startTime     DateTime
+  endTime       DateTime
+  sampleCount   Int
+  
+  // Temperature data
+  tempMin       Float
+  tempMax       Float
+  tempAvg       Float
+  
+  // Humidity data
+  humMin        Float
+  humMax        Float
+  humAvg        Float
+  
+  // Pressure data
+  pressMin      Float
+  pressMax      Float
+  pressAvg      Float
+  
+  // Current 1 data
+  current1Min   Float
+  current1Max   Float
+  current1Avg   Float
+  current1RMS   Float
+  dutyCycle1    Float
+  
+  // Current 2 data
+  current2Min   Float
+  current2Max   Float
+  current2Avg   Float
+  current2RMS   Float
+  dutyCycle2    Float
+  
+  createdAt     DateTime @default(now())
+  
+  @@index([timestamp])
+  @@index([device])
+  @@index([createdAt])
+  @@map("sensor_data")
+}
+
+model Event {
+  id            String      @id @default(cuid())
+  device        String
+  location      String
+  timestamp     DateTime
+  type          EventType
+  value         Float
+  threshold     Float
+  startTime     DateTime
+  duration      BigInt
+  active        Boolean
+  description   String
+  acknowledged  Boolean     @default(false)
+  acknowledgedBy String?
+  acknowledgedAt DateTime?
+  
+  createdAt     DateTime    @default(now())
+  
+  @@index([timestamp])
+  @@index([device])
+  @@index([type])
+  @@index([active])
+  @@map("events")
+}
+
+model SystemSettings {
+  id                String   @id @default(cuid())
+  key               String   @unique
+  value             String
+  description       String?
+  updatedAt         DateTime @updatedAt
+  updatedBy         String?
+  
+  @@map("system_settings")
+}
+
+model DataRetentionLog {
+  id            String   @id @default(cuid())
+  runAt         DateTime @default(now())
+  recordsDeleted Int
+  retentionDays  Int
+  success       Boolean
+  error         String?
+  
+  @@map("data_retention_logs")
+}
+
+enum UserRole {
+  ADMIN
+  VIEWER
+}
+
+enum EventType {
+  HIGH_CURRENT
+  LOW_PRESSURE
+  LOW_TEMPERATURE
+  SENSOR_ERROR
+  SYSTEM_ERROR
+  MISSING_DATA
+}

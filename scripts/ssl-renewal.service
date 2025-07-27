@@ -1,0 +1,24 @@
+[Unit]
+Description=SSL Certificate Renewal for Well Pump Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/well-pump-server
+ExecStart=/opt/well-pump-server/scripts/ssl-renew.sh -q
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/well-pump-server
+ReadWritePaths=/var/log
+
+# Restart policy
+Restart=on-failure
+RestartSec=30

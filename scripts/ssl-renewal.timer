@@ -1,0 +1,14 @@
+[Unit]
+Description=Run SSL Certificate Renewal twice daily
+Requires=ssl-renewal.service
+
+[Timer]
+# Run twice daily at 02:00 and 14:00
+OnCalendar=*-*-* 02,14:00:00
+# Add randomization to avoid load spikes
+RandomizedDelaySec=3600
+# Ensure the timer persists across reboots
+Persistent=true
+
+[Install]
+WantedBy=timers.target

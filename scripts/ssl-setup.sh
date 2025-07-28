@@ -9,7 +9,7 @@ set -e
 DOMAIN=""
 EMAIL=""
 SSL_DIR="./ssl"
-NGINX_CONTAINER="wellpump-nginx"
+# NGINX_CONTAINER="wellpump-nginx" # Removed - no longer using nginx
 APP_CONTAINER="wellpump-app"
 
 # Colors for output
@@ -78,14 +78,14 @@ create_ssl_directory() {
     log "SSL directory created at $SSL_DIR"
 }
 
-stop_nginx() {
-    log "Stopping nginx container for certificate generation..."
-    docker-compose stop nginx || warn "Nginx container was not running"
+stop_app() {
+    log "Stopping app container for certificate generation..."
+    docker-compose stop app || warn "App container was not running"
 }
 
-start_nginx() {
-    log "Starting nginx container..."
-    docker-compose up -d nginx
+start_app() {
+    log "Starting app container..."
+    docker-compose up -d app
 }
 
 obtain_certificate() {
@@ -126,7 +126,7 @@ setup_certificate_links() {
         error "Certificate directory not found: $cert_dir"
     fi
     
-    # Create symlinks for nginx
+    # Create symlinks for app SSL usage
     ln -sf "../live/$DOMAIN/fullchain.pem" "$SSL_DIR/fullchain.pem"
     ln -sf "../live/$DOMAIN/privkey.pem" "$SSL_DIR/privkey.pem"
     
@@ -152,17 +152,17 @@ verify_certificates() {
 restart_services() {
     log "Restarting services..."
     
-    # Restart nginx to load new certificates
-    start_nginx
+    # Restart app to load new certificates
+    start_app
     
-    # Wait a bit for nginx to start
+    # Wait a bit for app to start
     sleep 5
     
-    # Verify nginx is running
-    if docker-compose ps nginx | grep -q "Up"; then
+    # Verify app is running
+    if docker-compose ps app | grep -q "Up"; then
         log "Services restarted successfully"
     else
-        error "Failed to restart nginx"
+        error "Failed to restart app"
     fi
 }
 
@@ -189,14 +189,14 @@ main() {
     
     check_prerequisites
     create_ssl_directory
-    stop_nginx
+    stop_app
     obtain_certificate
     setup_certificate_links
     verify_certificates
     restart_services
     
     log "SSL certificate setup completed successfully!"
-    log "Your certificate is ready and nginx has been restarted with SSL enabled."
+    log "Your certificate is ready. You can now configure your app to use SSL directly."
     
     if [[ "$STAGING" == "true" ]]; then
         warn "Remember: You used staging certificates. Run without -s flag for production certificates."

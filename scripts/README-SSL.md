@@ -91,14 +91,14 @@ sudo ./scripts/install-renewal.sh [OPTIONS]
 
 ### Certificate Acquisition
 - Uses Docker to run certbot in standalone mode
-- Temporarily stops nginx during certificate generation
+- Temporarily stops the app during certificate generation
 - Creates certificates in `./ssl/` directory
-- Sets up symlinks for nginx to use
+- Sets up symlinks for direct app SSL usage
 
 ### Automatic Renewal
 - Checks certificate expiry twice daily
 - Renews certificates with less than 30 days remaining
-- Automatically restarts nginx after successful renewal
+- Automatically restarts the app after successful renewal
 - Logs all activities for monitoring
 
 ### Security Features
@@ -162,7 +162,7 @@ tail -f /var/log/ssl-renewal.log
 1. **Certificate generation fails:**
    - Ensure domain points to your server
    - Check if port 80 is accessible from internet
-   - Verify nginx is stopped during certificate generation
+   - Verify the app is stopped during certificate generation
 
 2. **Renewal fails:**
    - Check logs: `journalctl -u ssl-renewal.service`
@@ -171,7 +171,7 @@ tail -f /var/log/ssl-renewal.log
 
 3. **Services don't restart:**
    - Check docker-compose status
-   - Verify nginx configuration
+   - Verify app configuration for SSL
    - Check certificate file permissions
 
 ### Manual Certificate Renewal
@@ -198,7 +198,7 @@ rm -rf ./ssl/
 ## Important Notes
 
 - **Domain Requirements**: Your domain must point to the server where you're running this
-- **Port 80 Access**: The server must be accessible on port 80 from the internet
+- **Port 80 Access**: The server must be accessible on port 80 from the internet (for certificate generation only)
 - **Let's Encrypt Limits**: Be aware of Let's Encrypt rate limits (5 certificates per domain per week)
 - **Testing**: Always test with staging certificates first (`-s` flag)
 - **Backup**: Certificates are automatically backed up before renewal
@@ -209,5 +209,7 @@ rm -rf ./ssl/
 - Private keys are never logged or transmitted
 - Automatic renewal reduces risk of expired certificates
 - Rate limiting prevents abuse
+
+**Note**: This setup generates SSL certificates but requires manual configuration of the Next.js app to use HTTPS. The app runs on port 3000 by default.
 
 For additional help or issues, check the logs and ensure all prerequisites are met.

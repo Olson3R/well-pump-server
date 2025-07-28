@@ -7,7 +7,7 @@ set -e
 
 # Configuration
 SSL_DIR="./ssl"
-NGINX_CONTAINER="wellpump-nginx"
+# NGINX_CONTAINER="wellpump-nginx" # Removed - no longer using nginx
 APP_CONTAINER="wellpump-app"
 LOG_FILE="/var/log/ssl-renewal.log"
 
@@ -124,14 +124,14 @@ backup_certificates() {
     log "Certificates backed up to $backup_dir"
 }
 
-stop_nginx() {
-    log "Stopping nginx container for certificate renewal..."
-    docker-compose stop nginx || warn "Nginx container was not running"
+stop_app() {
+    log "Stopping app container for certificate renewal..."
+    docker-compose stop app || warn "App container was not running"
 }
 
-start_nginx() {
-    log "Starting nginx container..."
-    docker-compose up -d nginx
+start_app() {
+    log "Starting app container..."
+    docker-compose up -d app
 }
 
 renew_certificates() {
@@ -208,25 +208,22 @@ restart_services() {
     
     log "Restarting services to load new certificates..."
     
-    # Restart nginx
-    start_nginx
+    # Restart app
+    start_app
     
-    # Wait for nginx to start
+    # Wait for app to start
     sleep 5
     
     # Verify services are running
-    if docker-compose ps nginx | grep -q "Up"; then
+    if docker-compose ps app | grep -q "Up"; then
         log "Services restarted successfully"
         
-        # Test HTTPS connection
-        local domain=$(docker-compose exec -T nginx grep "server_name" /etc/nginx/nginx.conf | grep -v "_" | head -1 | awk '{print $2}' | tr -d ';' || echo "localhost")
-        if [[ "$domain" != "localhost" ]]; then
-            log "Testing HTTPS connection to $domain..."
-            if curl -s -f -k "https://$domain/health" >/dev/null 2>&1; then
-                log "HTTPS connection test successful"
-            else
-                warn "HTTPS connection test failed - check nginx configuration"
-            fi
+        # Test HTTP connection (app runs on port 3000)
+        log "Testing HTTP connection to app..."
+        if curl -s -f "http://localhost:3000/api/health" >/dev/null 2>&1; then
+            log "HTTP connection test successful"
+        else
+            warn "HTTP connection test failed - check app configuration"
         fi
     else
         error "Failed to restart services"
@@ -286,8 +283,8 @@ main() {
         backup_certificates
     fi
     
-    # Stop nginx for standalone renewal
-    stop_nginx
+    # Stop app for standalone renewal
+    stop_app
     
     # Attempt renewal
     if renew_certificates; then
@@ -296,11 +293,11 @@ main() {
             restart_services
             send_notification "success" "SSL certificate renewal completed successfully"
         else
-            start_nginx
+            start_app
             send_notification "success" "Dry run completed - certificates can be renewed"
         fi
     else
-        start_nginx
+        start_app
         if [[ "$DRY_RUN" != "true" ]]; then
             send_notification "info" "SSL certificate renewal skipped - not due for renewal"
         else

@@ -64,7 +64,13 @@ export async function GET(request: NextRequest) {
     const startDate = searchParams.get('startDate')
     const endDate = searchParams.get('endDate')
 
-    const where: any = {}
+    const where: {
+      device?: string;
+      timestamp?: {
+        gte?: Date;
+        lte?: Date;
+      };
+    } = {}
     
     if (device) {
       where.device = device

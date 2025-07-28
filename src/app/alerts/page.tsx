@@ -2,7 +2,7 @@
 
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { Navigation } from '@/components/Navigation'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { format } from 'date-fns'
 import {
   ExclamationTriangleIcon,
@@ -49,18 +49,14 @@ export default function AlertsPage() {
   const [events, setEvents] = useState<Event[]>([])
   const [filter, setFilter] = useState<'all' | 'active' | 'acknowledged'>('all')
   const [loading, setLoading] = useState(true)
-  const [notificationSettings, setNotificationSettings] = useState<any>(null)
+  const [notificationSettings, setNotificationSettings] = useState<{
+    email?: boolean
+    sms?: boolean
+    push?: boolean
+    pushEnabled?: boolean
+  } | null>(null)
 
-  useEffect(() => {
-    fetchEvents()
-    fetchNotificationSettings()
-    
-    // Auto-refresh every 30 seconds
-    const interval = setInterval(fetchEvents, 30000)
-    return () => clearInterval(interval)
-  }, [filter])
-
-  const fetchEvents = async () => {
+  const fetchEvents = useCallback(async () => {
     try {
       const params = new URLSearchParams()
       if (filter === 'active') params.append('active', 'true')
@@ -77,7 +73,16 @@ export default function AlertsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [filter])
+
+  useEffect(() => {
+    fetchEvents()
+    fetchNotificationSettings()
+    
+    // Auto-refresh every 30 seconds
+    const interval = setInterval(fetchEvents, 30000)
+    return () => clearInterval(interval)
+  }, [fetchEvents])
 
   const fetchNotificationSettings = async () => {
     try {
@@ -306,7 +311,7 @@ export default function AlertsPage() {
                             Acknowledged by {event.acknowledgedBy} at {format(new Date(event.acknowledgedAt), 'MMM d, HH:mm')}
                           </p>
                         )}
-                        {event.active && !event.acknowledged && session?.user.role === 'ADMIN' && (
+                        {event.active && !event.acknowledged && (session?.user as { role?: string })?.role === 'ADMIN' && (
                           <div className="mt-4">
                             <button
                               onClick={() => acknowledgeEvent(event.id)}

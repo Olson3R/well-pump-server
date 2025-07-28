@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
+import { getServerSession } from 'next-auth/next'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     const session = await getServerSession(authOptions)
     
-    if (!session || session.user.role !== 'ADMIN') {
+    if (!session || (session as { user: { role: string } }).user.role !== 'ADMIN') {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -36,7 +36,7 @@ export async function PUT(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
     
-    if (!session || session.user.role !== 'ADMIN') {
+    if (!session || (session as { user: { role: string } }).user.role !== 'ADMIN') {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -51,12 +51,12 @@ export async function PUT(request: NextRequest) {
         where: { key },
         update: { 
           value: String(value),
-          updatedBy: session.user.username
+          updatedBy: (session as { user: { username: string } }).user.username
         },
         create: { 
           key,
           value: String(value),
-          updatedBy: session.user.username
+          updatedBy: (session as { user: { username: string } }).user.username
         }
       })
     )

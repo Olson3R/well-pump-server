@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
 
       const pushSubscription = {
         endpoint: settings.pushEndpoint,
-        keys: settings.pushKeys as any
+        keys: settings.pushKeys as { p256dh: string; auth: string }
       }
 
       try {
@@ -64,13 +64,13 @@ export async function POST(request: NextRequest) {
       } catch (error) {
         console.error('Error sending push notification:', error)
         // If push fails, disable it for this user
-        if ((error as any).statusCode === 410) {
+        if ((error as { statusCode?: number }).statusCode === 410) {
           await prisma.notificationSettings.update({
             where: { id: settings.id },
             data: {
               pushEnabled: false,
               pushEndpoint: null,
-              pushKeys: null
+              pushKeys: undefined
             }
           })
         }

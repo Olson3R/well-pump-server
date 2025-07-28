@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getServerSession } from 'next-auth'
+import { getServerSession } from 'next-auth/next'
 import { authOptions } from '@/lib/auth'
 
 export async function GET(request: NextRequest) {
@@ -21,7 +21,13 @@ export async function GET(request: NextRequest) {
     const endDate = searchParams.get('endDate')
     const device = searchParams.get('device')
 
-    const where: any = {}
+    const where: {
+      device?: string
+      timestamp?: {
+        gte?: Date
+        lte?: Date
+      }
+    } = {}
     
     if (device) {
       where.device = device
@@ -37,7 +43,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    let data: any[]
+    let data: Array<Record<string, unknown>>
     let filename: string
 
     if (type === 'sensors') {
@@ -90,7 +96,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-function convertToCSV(data: any[]): string {
+function convertToCSV(data: Array<Record<string, unknown>>): string {
   if (data.length === 0) return ''
   
   const headers = Object.keys(data[0])

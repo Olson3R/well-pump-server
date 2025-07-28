@@ -44,6 +44,7 @@ export default function DataPage() {
 
   useEffect(() => {
     fetchData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeRange])
 
   const fetchData = async () => {

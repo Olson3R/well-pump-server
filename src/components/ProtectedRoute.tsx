@@ -21,7 +21,7 @@ export function ProtectedRoute({ children, requiredRole = 'VIEWER' }: ProtectedR
       return
     }
 
-    if (requiredRole === 'ADMIN' && session.user.role !== 'ADMIN') {
+    if (requiredRole === 'ADMIN' && (session?.user as { role?: string })?.role !== 'ADMIN') {
       router.push('/unauthorized')
       return
     }
@@ -39,7 +39,7 @@ export function ProtectedRoute({ children, requiredRole = 'VIEWER' }: ProtectedR
     return null
   }
 
-  if (requiredRole === 'ADMIN' && session.user.role !== 'ADMIN') {
+  if (requiredRole === 'ADMIN' && (session?.user as { role?: string })?.role !== 'ADMIN') {
     return null
   }
 

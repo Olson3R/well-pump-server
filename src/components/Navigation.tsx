@@ -23,7 +23,7 @@ export function Navigation() {
     { name: 'Dashboard', href: '/', icon: HomeIcon },
     { name: 'Data', href: '/data', icon: ChartBarIcon },
     { name: 'Alerts', href: '/alerts', icon: BellIcon },
-    ...(session?.user.role === 'ADMIN' ? [
+    ...((session?.user as { role?: string })?.role === 'ADMIN' ? [
       { name: 'Settings', href: '/settings', icon: Cog6ToothIcon }
     ] : [])
   ]
@@ -64,7 +64,7 @@ export function Navigation() {
           
           <div className="hidden md:flex md:items-center md:space-x-4">
             <span className="text-blue-100 text-sm">
-              {session?.user.username} ({session?.user.role})
+              {(session?.user as { username?: string })?.username} ({(session?.user as { role?: string })?.role})
             </span>
             <button
               onClick={() => signOut()}
@@ -113,7 +113,7 @@ export function Navigation() {
             })}
             <div className="border-t border-blue-600 pt-4">
               <div className="px-3 py-2 text-blue-100 text-sm">
-                {session?.user.username} ({session?.user.role})
+                {(session?.user as { username?: string })?.username} ({(session?.user as { role?: string })?.role})
               </div>
               <button
                 onClick={() => signOut()}

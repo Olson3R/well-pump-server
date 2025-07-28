@@ -81,7 +81,15 @@ export async function GET(request: NextRequest) {
     const startDate = searchParams.get('startDate')
     const endDate = searchParams.get('endDate')
 
-    const where: any = {}
+    const where: {
+      device?: string
+      active?: boolean
+      type?: EventType
+      timestamp?: {
+        gte?: Date
+        lte?: Date
+      }
+    } = {}
     
     if (device) {
       where.device = device
@@ -153,7 +161,7 @@ export async function PATCH(request: NextRequest) {
     }
 
     if (action === 'acknowledge') {
-      const result = await prisma.event.update({
+      await prisma.event.update({
         where: { id: eventId },
         data: {
           acknowledged: true,

@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
+import { getServerSession } from 'next-auth/next'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     const session = await getServerSession(authOptions)
     
@@ -15,14 +15,14 @@ export async function GET(request: NextRequest) {
     }
 
     const settings = await prisma.notificationSettings.findUnique({
-      where: { userId: session.user.id }
+      where: { userId: (session as { user: { id: string } }).user.id }
     })
 
     if (!settings) {
       // Create default settings if none exist
       const newSettings = await prisma.notificationSettings.create({
         data: {
-          userId: session.user.id,
+          userId: (session as { user: { id: string } }).user.id,
           pushEnabled: true,
           pushoverEnabled: false,
           highCurrentAlert: true,
@@ -59,11 +59,11 @@ export async function PUT(request: NextRequest) {
     const data = await request.json()
     
     const settings = await prisma.notificationSettings.upsert({
-      where: { userId: session.user.id },
+      where: { userId: (session as { user: { id: string } }).user.id },
       update: data,
       create: {
         ...data,
-        userId: session.user.id
+        userId: (session as { user: { id: string } }).user.id
       }
     })
 

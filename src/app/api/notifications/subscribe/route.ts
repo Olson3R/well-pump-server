@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
+import { getServerSession } from 'next-auth/next'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 
@@ -25,14 +25,14 @@ export async function POST(request: NextRequest) {
 
     // Update user's push notification settings
     await prisma.notificationSettings.upsert({
-      where: { userId: session.user.id },
+      where: { userId: (session as { user: { id: string } }).user.id },
       update: {
         pushEnabled: true,
         pushEndpoint: subscription.endpoint,
         pushKeys: subscription.keys
       },
       create: {
-        userId: session.user.id,
+        userId: (session as { user: { id: string } }).user.id,
         pushEnabled: true,
         pushEndpoint: subscription.endpoint,
         pushKeys: subscription.keys,
@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function DELETE(request: NextRequest) {
+export async function DELETE() {
   try {
     const session = await getServerSession(authOptions)
     
@@ -72,11 +72,11 @@ export async function DELETE(request: NextRequest) {
 
     // Disable push notifications
     await prisma.notificationSettings.update({
-      where: { userId: session.user.id },
+      where: { userId: (session as { user: { id: string } }).user.id },
       data: {
         pushEnabled: false,
         pushEndpoint: null,
-        pushKeys: null
+        pushKeys: undefined
       }
     })
 

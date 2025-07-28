@@ -3,7 +3,6 @@
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { Navigation } from '@/components/Navigation'
 import { useState, useEffect } from 'react'
-import { useSession } from 'next-auth/react'
 import {
   BellIcon,
   UserIcon,
@@ -25,10 +24,9 @@ interface NotificationSettings {
 }
 
 export default function SettingsPage() {
-  const { data: session } = useSession()
   const [activeTab, setActiveTab] = useState('notifications')
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null)
-  const [systemSettings, setSystemSettings] = useState<any>({})
+  const [systemSettings, setSystemSettings] = useState<Record<string, string | number | boolean>>({})
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
 
@@ -77,7 +75,7 @@ export default function SettingsPage() {
       } else {
         throw new Error('Failed to save settings')
       }
-    } catch (error) {
+    } catch {
       setMessage({ type: 'error', text: 'Error saving notification settings' })
     } finally {
       setSaving(false)
@@ -337,7 +335,7 @@ export default function SettingsPage() {
                     </label>
                     <input
                       type="number"
-                      value={systemSettings.dataRetentionYears || 3}
+                      value={Number(systemSettings.dataRetentionYears) || 3}
                       onChange={(e) => setSystemSettings({
                         ...systemSettings,
                         dataRetentionYears: parseInt(e.target.value)

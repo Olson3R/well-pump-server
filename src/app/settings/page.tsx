@@ -2,11 +2,17 @@
 
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { Navigation } from '@/components/Navigation'
+import UserManagement from '@/components/UserManagement'
+import PasswordChange from '@/components/PasswordChange'
+import DeviceTokens from '@/components/DeviceTokens'
 import { useState, useEffect } from 'react'
+import { useSession } from 'next-auth/react'
 import {
   BellIcon,
   UserIcon,
   CogIcon,
+  KeyIcon,
+  LockClosedIcon,
   ExclamationTriangleIcon,
   CheckCircleIcon
 } from '@heroicons/react/24/outline'
@@ -24,6 +30,7 @@ interface NotificationSettings {
 }
 
 export default function SettingsPage() {
+  const { data: session } = useSession()
   const [activeTab, setActiveTab] = useState('notifications')
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null)
   const [systemSettings, setSystemSettings] = useState<Record<string, string | number | boolean>>({})
@@ -111,14 +118,21 @@ export default function SettingsPage() {
     }
   }
 
+  const sessionUser = session as { user: { role: string } } | null
+  const isAdmin = (sessionUser?.user as { role?: string })?.role === 'ADMIN'
+
   const tabs = [
     { id: 'notifications', name: 'Notifications', icon: BellIcon },
-    { id: 'users', name: 'Users', icon: UserIcon },
-    { id: 'system', name: 'System', icon: CogIcon }
+    { id: 'password', name: 'Password', icon: LockClosedIcon },
+    { id: 'tokens', name: 'Device Tokens', icon: KeyIcon },
+    ...(isAdmin ? [
+      { id: 'users', name: 'Users', icon: UserIcon },
+      { id: 'system', name: 'System', icon: CogIcon }
+    ] : [])
   ]
 
   return (
-    <ProtectedRoute requiredRole="ADMIN">
+    <ProtectedRoute>
       <div className="min-h-screen bg-gray-50">
         <Navigation />
         
@@ -311,18 +325,13 @@ export default function SettingsPage() {
             </div>
           )}
 
-          {activeTab === 'users' && (
-            <div className="bg-white shadow rounded-lg">
-              <div className="px-4 py-5 sm:p-6">
-                <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
-                  User Management
-                </h3>
-                <p className="text-gray-500">User management features coming soon...</p>
-              </div>
-            </div>
-          )}
+          {activeTab === 'password' && <PasswordChange />}
 
-          {activeTab === 'system' && (
+          {activeTab === 'tokens' && <DeviceTokens />}
+
+          {isAdmin && activeTab === 'users' && <UserManagement />}
+
+          {isAdmin && activeTab === 'system' && (
             <div className="bg-white shadow rounded-lg">
               <div className="px-4 py-5 sm:p-6">
                 <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">

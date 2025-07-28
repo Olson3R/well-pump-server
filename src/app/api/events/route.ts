@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { EventType } from '@prisma/client'
+import { getAuthContext, hasPermission } from '@/lib/auth-middleware'
 
 export async function POST(request: NextRequest) {
   try {
+    // Check authentication for POST requests (device token required)
+    const authContext = await getAuthContext(request)
+    if (!hasPermission(authContext, 'events')) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const data = await request.json()
     
     // Validate required fields based on ESP32 event structure
@@ -72,6 +79,11 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
+    // Check authentication for GET requests (session or device token)
+    const authContext = await getAuthContext(request)
+    if (!hasPermission(authContext, 'events')) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
     const { searchParams } = new URL(request.url)
     const limit = parseInt(searchParams.get('limit') || '100')
     const offset = parseInt(searchParams.get('offset') || '0')

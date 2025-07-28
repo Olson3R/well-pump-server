@@ -23,6 +23,9 @@ model User {
   // Notification settings
   notificationSettings NotificationSettings?
   
+  // Device tokens
+  deviceTokens DeviceToken[]
+  
   @@map("users")
 }
 
@@ -145,6 +148,24 @@ model DataRetentionLog {
   error         String?
   
   @@map("data_retention_logs")
+}
+
+model DeviceToken {
+  id          String    @id @default(cuid())
+  name        String
+  token       String    @unique
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permissions Json      @default("{\"sensors\": true, \"events\": true}")
+  lastUsed    DateTime?
+  expiresAt   DateTime?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  @@index([token])
+  @@index([userId])
+  @@map("device_tokens")
 }
 
 enum UserRole {

@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await request.json()
-    
+
     // Validate required fields based on ESP32 event structure
     const requiredFields = [
       'device', 'location', 'timestamp', 'type', 'value', 'threshold',
@@ -45,28 +45,103 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Convert timestamp strings to Date objects
-    const eventData = {
-      ...data,
-      type: eventType,
-      timestamp: new Date(parseInt(data.timestamp)),
-      startTime: new Date(parseInt(data.startTime)),
-      duration: BigInt(data.duration)
-    }
+    const timestamp = new Date(parseInt(data.timestamp))
+    const startTime = new Date(parseInt(data.startTime))
+    const duration = BigInt(data.duration)
+    const isActive = data.active
 
-    // Save to database
-    const result = await prisma.event.create({
-      data: eventData
+    // Find existing active event of the same type for this device
+    const existingEvent = await prisma.event.findFirst({
+      where: {
+        device: data.device,
+        type: eventType,
+        active: true
+      },
+      orderBy: { timestamp: 'desc' }
     })
 
-    return NextResponse.json(
-      { 
-        success: true, 
-        id: result.id,
-        message: 'Event saved successfully' 
-      },
-      { status: 201 }
-    )
+    if (isActive) {
+      // Condition is active
+      if (existingEvent) {
+        // Update existing active event with new values
+        const result = await prisma.event.update({
+          where: { id: existingEvent.id },
+          data: {
+            timestamp,
+            value: data.value,
+            duration,
+            description: data.description
+          }
+        })
+
+        return NextResponse.json(
+          {
+            success: true,
+            id: result.id,
+            message: 'Existing event updated',
+            updated: true
+          },
+          { status: 200 }
+        )
+      } else {
+        // Create new active event
+        const result = await prisma.event.create({
+          data: {
+            device: data.device,
+            location: data.location,
+            timestamp,
+            type: eventType,
+            value: data.value,
+            threshold: data.threshold,
+            startTime,
+            duration,
+            active: true,
+            description: data.description
+          }
+        })
+
+        return NextResponse.json(
+          {
+            success: true,
+            id: result.id,
+            message: 'Event created',
+            created: true
+          },
+          { status: 201 }
+        )
+      }
+    } else {
+      // Condition has cleared - resolve any active event
+      if (existingEvent) {
+        const result = await prisma.event.update({
+          where: { id: existingEvent.id },
+          data: {
+            active: false,
+            timestamp, // Update to resolution time
+            duration
+          }
+        })
+
+        return NextResponse.json(
+          {
+            success: true,
+            id: result.id,
+            message: 'Event resolved',
+            resolved: true
+          },
+          { status: 200 }
+        )
+      } else {
+        // No active event to resolve - nothing to do
+        return NextResponse.json(
+          {
+            success: true,
+            message: 'No active event to resolve'
+          },
+          { status: 200 }
+        )
+      }
+    }
 
   } catch (error) {
     console.error('Error saving event:', error)
@@ -184,6 +259,20 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({
         success: true,
         message: 'Event acknowledged successfully'
+      })
+    }
+
+    if (action === 'resolve') {
+      await prisma.event.update({
+        where: { id: eventId },
+        data: {
+          active: false
+        }
+      })
+
+      return NextResponse.json({
+        success: true,
+        message: 'Event resolved successfully'
       })
     }
 

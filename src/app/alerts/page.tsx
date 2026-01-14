@@ -101,12 +101,26 @@ export default function AlertsPage() {
       const response = await fetch(`/api/events?id=${eventId}&action=acknowledge`, {
         method: 'PATCH'
       })
-      
+
       if (response.ok) {
         fetchEvents()
       }
     } catch (error) {
       console.error('Error acknowledging event:', error)
+    }
+  }
+
+  const resolveEvent = async (eventId: string) => {
+    try {
+      const response = await fetch(`/api/events?id=${eventId}&action=resolve`, {
+        method: 'PATCH'
+      })
+
+      if (response.ok) {
+        fetchEvents()
+      }
+    } catch (error) {
+      console.error('Error resolving event:', error)
     }
   }
 
@@ -311,14 +325,24 @@ export default function AlertsPage() {
                             Acknowledged by {event.acknowledgedBy} at {format(new Date(event.acknowledgedAt), 'MMM d, HH:mm')}
                           </p>
                         )}
-                        {event.active && !event.acknowledged && (session?.user as { role?: string })?.role === 'ADMIN' && (
-                          <div className="mt-4">
-                            <button
-                              onClick={() => acknowledgeEvent(event.id)}
-                              className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                            >
-                              Acknowledge
-                            </button>
+                        {(session?.user as { role?: string })?.role === 'ADMIN' && (event.active || !event.acknowledged) && (
+                          <div className="mt-4 flex space-x-2">
+                            {event.active && !event.acknowledged && (
+                              <button
+                                onClick={() => acknowledgeEvent(event.id)}
+                                className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                              >
+                                Acknowledge
+                              </button>
+                            )}
+                            {event.active && (
+                              <button
+                                onClick={() => resolveEvent(event.id)}
+                                className="inline-flex items-center px-3 py-2 border border-gray-300 text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                              >
+                                Resolve
+                              </button>
+                            )}
                           </div>
                         )}
                       </div>

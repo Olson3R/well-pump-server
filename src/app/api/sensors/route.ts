@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { Prisma } from '@prisma/client'
 import { getAuthContext, hasPermission } from '@/lib/auth-middleware'
 
 export async function POST(request: NextRequest) {
@@ -70,11 +71,74 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
     const { searchParams } = new URL(request.url)
-    const limit = parseInt(searchParams.get('limit') || '100')
+    const limitParam = searchParams.get('limit')
+    const limit = limitParam ? parseInt(limitParam) : null
     const offset = parseInt(searchParams.get('offset') || '0')
     const device = searchParams.get('device')
     const startDate = searchParams.get('startDate')
     const endDate = searchParams.get('endDate')
+    const aggregate = searchParams.get('aggregate') // 'hour' or '6hour'
+
+    // Handle aggregated queries for longer time ranges
+    if (aggregate && startDate && endDate) {
+      const deviceCondition = device
+        ? Prisma.sql`AND device = ${device}`
+        : Prisma.empty
+
+      let aggregatedData
+      if (aggregate === '6hour') {
+        aggregatedData = await prisma.$queryRaw`
+          SELECT
+            date_trunc('hour', timestamp) - (EXTRACT(hour FROM timestamp)::int % 6) * interval '1 hour' as timestamp,
+            AVG("tempAvg") as "tempAvg",
+            AVG("humAvg") as "humAvg",
+            AVG("pressAvg") as "pressAvg",
+            AVG("current1Avg") as "current1Avg",
+            AVG("current2Avg") as "current2Avg",
+            AVG("current1RMS") as "current1RMS",
+            AVG("current2RMS") as "current2RMS",
+            AVG("dutyCycle1") as "dutyCycle1",
+            AVG("dutyCycle2") as "dutyCycle2",
+            COUNT(*)::int as "sampleCount"
+          FROM sensor_data
+          WHERE timestamp >= ${new Date(startDate)}
+            AND timestamp <= ${new Date(endDate)}
+            ${deviceCondition}
+          GROUP BY date_trunc('hour', timestamp) - (EXTRACT(hour FROM timestamp)::int % 6) * interval '1 hour'
+          ORDER BY timestamp DESC
+        `
+      } else {
+        aggregatedData = await prisma.$queryRaw`
+          SELECT
+            date_trunc('hour', timestamp) as timestamp,
+            AVG("tempAvg") as "tempAvg",
+            AVG("humAvg") as "humAvg",
+            AVG("pressAvg") as "pressAvg",
+            AVG("current1Avg") as "current1Avg",
+            AVG("current2Avg") as "current2Avg",
+            AVG("current1RMS") as "current1RMS",
+            AVG("current2RMS") as "current2RMS",
+            AVG("dutyCycle1") as "dutyCycle1",
+            AVG("dutyCycle2") as "dutyCycle2",
+            COUNT(*)::int as "sampleCount"
+          FROM sensor_data
+          WHERE timestamp >= ${new Date(startDate)}
+            AND timestamp <= ${new Date(endDate)}
+            ${deviceCondition}
+          GROUP BY date_trunc('hour', timestamp)
+          ORDER BY timestamp DESC
+        `
+      }
+
+      return NextResponse.json({
+        data: aggregatedData,
+        aggregation: {
+          interval: aggregate,
+          startDate,
+          endDate
+        }
+      })
+    }
 
     const where: {
       device?: string;
@@ -83,11 +147,11 @@ export async function GET(request: NextRequest) {
         lte?: Date;
       };
     } = {}
-    
+
     if (device) {
       where.device = device
     }
-    
+
     if (startDate || endDate) {
       where.timestamp = {}
       if (startDate) {
@@ -101,7 +165,7 @@ export async function GET(request: NextRequest) {
     const sensorData = await prisma.sensorData.findMany({
       where,
       orderBy: { timestamp: 'desc' },
-      take: limit,
+      ...(limit ? { take: limit } : {}),
       skip: offset
     })
 
@@ -111,9 +175,9 @@ export async function GET(request: NextRequest) {
       data: sensorData,
       pagination: {
         total,
-        limit,
+        ...(limit ? { limit } : {}),
         offset,
-        hasMore: offset + limit < total
+        hasMore: limit ? offset + limit < total : false
       }
     })
 

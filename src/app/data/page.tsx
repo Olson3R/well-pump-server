@@ -41,38 +41,74 @@ export default function DataPage() {
   const [view, setView] = useState<'table' | 'chart'>('chart')
   const [timeRange, setTimeRange] = useState('24h')
   const [loading, setLoading] = useState(true)
+  const [customStartDate, setCustomStartDate] = useState('')
+  const [customEndDate, setCustomEndDate] = useState('')
+  const [dateRangeSpan, setDateRangeSpan] = useState(1) // days
 
   useEffect(() => {
-    fetchData()
+    if (timeRange !== 'custom') {
+      fetchData()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeRange])
 
-  const fetchData = async () => {
+  const fetchData = async (customStart?: string, customEnd?: string) => {
     setLoading(true)
     try {
-      const endDate = new Date()
-      const startDate = new Date()
-      
-      switch (timeRange) {
-        case '1h':
-          startDate.setHours(startDate.getHours() - 1)
-          break
-        case '24h':
-          startDate.setDate(startDate.getDate() - 1)
-          break
-        case '7d':
-          startDate.setDate(startDate.getDate() - 7)
-          break
-        case '30d':
-          startDate.setDate(startDate.getDate() - 30)
-          break
+      let startDate: Date
+      let endDate: Date
+      let aggregate = ''
+
+      if (timeRange === 'custom' && customStart && customEnd) {
+        startDate = new Date(customStart)
+        endDate = new Date(customEnd)
+        // Set end date to end of day
+        endDate.setHours(23, 59, 59, 999)
+      } else {
+        endDate = new Date()
+        startDate = new Date()
+
+        switch (timeRange) {
+          case '1h':
+            startDate.setHours(startDate.getHours() - 1)
+            break
+          case '24h':
+            startDate.setDate(startDate.getDate() - 1)
+            break
+          case '7d':
+            startDate.setDate(startDate.getDate() - 7)
+            aggregate = 'hour'
+            break
+          case '30d':
+            startDate.setDate(startDate.getDate() - 30)
+            aggregate = '6hour'
+            break
+        }
       }
 
-      const response = await fetch(
-        `/api/sensors?startDate=${startDate.toISOString()}&endDate=${endDate.toISOString()}&limit=500`
-      )
+      // Calculate span in days for custom ranges
+      const spanMs = endDate.getTime() - startDate.getTime()
+      const spanDays = spanMs / (1000 * 60 * 60 * 24)
+      setDateRangeSpan(spanDays)
+
+      // Smart aggregation for custom date ranges
+      if (timeRange === 'custom') {
+        if (spanDays > 7) {
+          aggregate = '6hour' // > 7 days: aggregate by 6 hours
+        } else if (spanDays > 1) {
+          aggregate = 'hour' // > 1 day: aggregate by hour
+        }
+        // <= 1 day: no aggregation (raw data)
+      }
+
+      let url = `/api/sensors?startDate=${startDate.toISOString()}&endDate=${endDate.toISOString()}`
+      if (aggregate) {
+        url += `&aggregate=${aggregate}`
+      }
+
+      const response = await fetch(url)
       const result = await response.json()
-      
+
       if (result.data) {
         setData(result.data.reverse()) // Reverse to show oldest first for charts
       }
@@ -80,6 +116,12 @@ export default function DataPage() {
       console.error('Error fetching data:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleCustomDateFetch = () => {
+    if (customStartDate && customEndDate) {
+      fetchData(customStartDate, customEndDate)
     }
   }
 
@@ -107,10 +149,18 @@ export default function DataPage() {
   }
 
   const formatData = () => {
+    // Choose date format based on time range span
+    let dateFormat = 'HH:mm'
+    if (timeRange === '7d' || (timeRange === 'custom' && dateRangeSpan > 1 && dateRangeSpan <= 7)) {
+      dateFormat = 'EEE HH:mm' // e.g., "Mon 14:00"
+    } else if (timeRange === '30d' || (timeRange === 'custom' && dateRangeSpan > 7)) {
+      dateFormat = 'MMM d' // e.g., "Jan 15"
+    }
+
     return data.map(d => ({
       ...d,
       timestamp: new Date(d.timestamp).getTime(),
-      formattedTime: format(new Date(d.timestamp), 'HH:mm')
+      formattedTime: format(new Date(d.timestamp), dateFormat)
     }))
   }
 
@@ -147,42 +197,81 @@ export default function DataPage() {
 
           {/* Controls */}
           <div className="bg-white shadow rounded-lg p-4 mb-6">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
-              <div className="flex space-x-2">
-                <button
-                  onClick={() => setView('chart')}
-                  className={`inline-flex items-center px-4 py-2 rounded-md text-sm font-medium ${
-                    view === 'chart'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                  }`}
+            <div className="flex flex-col space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
+                <div className="flex space-x-2">
+                  <button
+                    onClick={() => setView('chart')}
+                    className={`inline-flex items-center px-4 py-2 rounded-md text-sm font-medium ${
+                      view === 'chart'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                  >
+                    <ChartBarIcon className="h-5 w-5 mr-2" />
+                    Charts
+                  </button>
+                  <button
+                    onClick={() => setView('table')}
+                    className={`inline-flex items-center px-4 py-2 rounded-md text-sm font-medium ${
+                      view === 'table'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                  >
+                    <TableCellsIcon className="h-5 w-5 mr-2" />
+                    Table
+                  </button>
+                </div>
+
+                <select
+                  value={timeRange}
+                  onChange={(e) => setTimeRange(e.target.value)}
+                  className="block w-full sm:w-auto pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
                 >
-                  <ChartBarIcon className="h-5 w-5 mr-2" />
-                  Charts
-                </button>
-                <button
-                  onClick={() => setView('table')}
-                  className={`inline-flex items-center px-4 py-2 rounded-md text-sm font-medium ${
-                    view === 'table'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                  }`}
-                >
-                  <TableCellsIcon className="h-5 w-5 mr-2" />
-                  Table
-                </button>
+                  <option value="1h">Last Hour</option>
+                  <option value="24h">Last 24 Hours</option>
+                  <option value="7d">Last 7 Days</option>
+                  <option value="30d">Last 30 Days</option>
+                  <option value="custom">Custom Range</option>
+                </select>
               </div>
-              
-              <select
-                value={timeRange}
-                onChange={(e) => setTimeRange(e.target.value)}
-                className="block w-full sm:w-auto pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-              >
-                <option value="1h">Last Hour</option>
-                <option value="24h">Last 24 Hours</option>
-                <option value="7d">Last 7 Days</option>
-                <option value="30d">Last 30 Days</option>
-              </select>
+
+              {timeRange === 'custom' && (
+                <div className="flex flex-col sm:flex-row sm:items-end space-y-4 sm:space-y-0 sm:space-x-4 pt-2 border-t border-gray-200">
+                  <div className="flex-1">
+                    <label htmlFor="startDate" className="block text-sm font-medium text-gray-700 mb-1">
+                      Start Date
+                    </label>
+                    <input
+                      type="date"
+                      id="startDate"
+                      value={customStartDate}
+                      onChange={(e) => setCustomStartDate(e.target.value)}
+                      className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label htmlFor="endDate" className="block text-sm font-medium text-gray-700 mb-1">
+                      End Date
+                    </label>
+                    <input
+                      type="date"
+                      id="endDate"
+                      value={customEndDate}
+                      onChange={(e) => setCustomEndDate(e.target.value)}
+                      className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                    />
+                  </div>
+                  <button
+                    onClick={handleCustomDateFetch}
+                    disabled={!customStartDate || !customEndDate}
+                    className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                  >
+                    Load Data
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 

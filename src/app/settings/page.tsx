@@ -14,7 +14,8 @@ import {
   KeyIcon,
   LockClosedIcon,
   ExclamationTriangleIcon,
-  CheckCircleIcon
+  CheckCircleIcon,
+  TrashIcon
 } from '@heroicons/react/24/outline'
 
 interface NotificationSettings {
@@ -29,6 +30,15 @@ interface NotificationSettings {
   missingDataAlert: boolean
 }
 
+interface CleanupLog {
+  id: string
+  runAt: string
+  recordsDeleted: number
+  retentionDays: number
+  success: boolean
+  error?: string
+}
+
 export default function SettingsPage() {
   const { data: session } = useSession()
   const [activeTab, setActiveTab] = useState('notifications')
@@ -36,11 +46,22 @@ export default function SettingsPage() {
   const [systemSettings, setSystemSettings] = useState<Record<string, string | number | boolean>>({})
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
+  const [cleanupLogs, setCleanupLogs] = useState<CleanupLog[]>([])
+  const [cleaningUp, setCleaningUp] = useState(false)
+
+  const sessionUser = session as { user: { role: string } } | null
+  const isAdmin = (sessionUser?.user as { role?: string })?.role === 'ADMIN'
 
   useEffect(() => {
     fetchNotificationSettings()
     fetchSystemSettings()
   }, [])
+
+  useEffect(() => {
+    if (activeTab === 'system' && isAdmin) {
+      fetchCleanupLogs()
+    }
+  }, [activeTab, isAdmin])
 
   const fetchNotificationSettings = async () => {
     try {
@@ -63,6 +84,50 @@ export default function SettingsPage() {
       }
     } catch (error) {
       console.error('Error fetching system settings:', error)
+    }
+  }
+
+  const fetchCleanupLogs = async () => {
+    try {
+      const response = await fetch('/api/maintenance/cleanup')
+      if (response.ok) {
+        const data = await response.json()
+        setCleanupLogs(data)
+      }
+    } catch (error) {
+      console.error('Error fetching cleanup logs:', error)
+    }
+  }
+
+  const triggerCleanup = async () => {
+    setCleaningUp(true)
+    setMessage(null)
+
+    try {
+      const response = await fetch('/api/maintenance/cleanup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ retentionMonths: 2 })
+      })
+
+      const data = await response.json()
+
+      if (response.ok && data.success) {
+        setMessage({
+          type: 'success',
+          text: `Cleanup completed: ${data.sensorDataDeleted} sensor records and ${data.eventsDeleted} events deleted`
+        })
+        fetchCleanupLogs()
+      } else {
+        throw new Error(data.error || 'Cleanup failed')
+      }
+    } catch (error) {
+      setMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Error running cleanup'
+      })
+    } finally {
+      setCleaningUp(false)
     }
   }
 
@@ -117,9 +182,6 @@ export default function SettingsPage() {
       }
     }
   }
-
-  const sessionUser = session as { user: { role: string } } | null
-  const isAdmin = (sessionUser?.user as { role?: string })?.role === 'ADMIN'
 
   const tabs = [
     { id: 'notifications', name: 'Notifications', icon: BellIcon },
@@ -332,31 +394,97 @@ export default function SettingsPage() {
           {isAdmin && activeTab === 'users' && <UserManagement />}
 
           {isAdmin && activeTab === 'system' && (
-            <div className="bg-white shadow rounded-lg">
-              <div className="px-4 py-5 sm:p-6">
-                <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
-                  System Settings
-                </h3>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Data Retention Period (years)
-                    </label>
-                    <input
-                      type="number"
-                      value={Number(systemSettings.dataRetentionYears) || 3}
-                      onChange={(e) => setSystemSettings({
-                        ...systemSettings,
-                        dataRetentionYears: parseInt(e.target.value)
-                      })}
-                      min="1"
-                      max="10"
-                      className="mt-1 block w-32 border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                    />
-                    <p className="mt-1 text-sm text-gray-500">
-                      Automatically delete data older than this period
-                    </p>
+            <div className="space-y-6">
+              {/* Data Retention Settings */}
+              <div className="bg-white shadow rounded-lg">
+                <div className="px-4 py-5 sm:p-6">
+                  <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
+                    System Settings
+                  </h3>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        Data Retention Period (years)
+                      </label>
+                      <input
+                        type="number"
+                        value={Number(systemSettings.dataRetentionYears) || 3}
+                        onChange={(e) => setSystemSettings({
+                          ...systemSettings,
+                          dataRetentionYears: parseInt(e.target.value)
+                        })}
+                        min="1"
+                        max="10"
+                        className="mt-1 block w-32 border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                      />
+                      <p className="mt-1 text-sm text-gray-500">
+                        Automatically delete data older than this period
+                      </p>
+                    </div>
                   </div>
+                </div>
+              </div>
+
+              {/* Data Cleanup */}
+              <div className="bg-white shadow rounded-lg">
+                <div className="px-4 py-5 sm:p-6">
+                  <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
+                    Data Cleanup
+                  </h3>
+                  <p className="text-sm text-gray-500 mb-4">
+                    Delete sensor data and resolved events older than 2 months. This runs automatically every day at 2:00 AM.
+                  </p>
+                  <button
+                    onClick={triggerCleanup}
+                    disabled={cleaningUp}
+                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50"
+                  >
+                    <TrashIcon className="h-4 w-4 mr-2" />
+                    {cleaningUp ? 'Cleaning up...' : 'Run Cleanup Now'}
+                  </button>
+
+                  {/* Cleanup Logs */}
+                  {cleanupLogs.length > 0 && (
+                    <div className="mt-6">
+                      <h4 className="text-sm font-medium text-gray-900 mb-2">Recent Cleanup History</h4>
+                      <div className="overflow-hidden border border-gray-200 rounded-md">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Records Deleted</th>
+                              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200">
+                            {cleanupLogs.map((log) => (
+                              <tr key={log.id}>
+                                <td className="px-4 py-2 text-sm text-gray-900">
+                                  {new Date(log.runAt).toLocaleString()}
+                                </td>
+                                <td className="px-4 py-2 text-sm text-gray-900">
+                                  {log.recordsDeleted}
+                                </td>
+                                <td className="px-4 py-2 text-sm">
+                                  {log.success ? (
+                                    <span className="inline-flex items-center text-green-600">
+                                      <CheckCircleIcon className="h-4 w-4 mr-1" />
+                                      Success
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center text-red-600" title={log.error}>
+                                      <ExclamationTriangleIcon className="h-4 w-4 mr-1" />
+                                      Failed
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

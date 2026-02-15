@@ -1,80 +1,77 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
+import { getServerSession } from 'next-auth/next'
+import { authOptions } from '@/lib/auth'
+import { cleanupOldData, getCleanupLogs } from '@/lib/cleanup'
 
+// POST - Trigger data cleanup (admin only or API key)
 export async function POST(request: NextRequest) {
   try {
-    // This endpoint should be protected by API key or cron job
+    // Check for API key auth (for external triggers)
     const apiKey = request.headers.get('x-api-key')
-    if (apiKey !== process.env.INTERNAL_API_KEY) {
+    const isApiKeyAuth = apiKey === process.env.INTERNAL_API_KEY
+
+    // Check for session auth (for UI triggers)
+    let isAdminAuth = false
+    if (!isApiKeyAuth) {
+      const session = await getServerSession(authOptions)
+      const sessionUser = session?.user as { role?: string } | undefined
+      isAdminAuth = sessionUser?.role === 'ADMIN'
+    }
+
+    if (!isApiKeyAuth && !isAdminAuth) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       )
     }
 
-    // Get data retention setting
-    const retentionSetting = await prisma.systemSettings.findUnique({
-      where: { key: 'dataRetentionYears' }
-    })
-    
-    const retentionYears = retentionSetting ? parseInt(retentionSetting.value) : 3
-    const cutoffDate = new Date()
-    cutoffDate.setFullYear(cutoffDate.getFullYear() - retentionYears)
-
-    // Delete old sensor data
-    const deletedSensorData = await prisma.sensorData.deleteMany({
-      where: {
-        timestamp: {
-          lt: cutoffDate
-        }
-      }
-    })
-
-    // Delete old events (but keep for longer than sensor data for audit purposes)
-    const eventCutoffDate = new Date()
-    eventCutoffDate.setFullYear(eventCutoffDate.getFullYear() - (retentionYears + 1))
-    
-    const deletedEvents = await prisma.event.deleteMany({
-      where: {
-        timestamp: {
-          lt: eventCutoffDate
-        }
-      }
-    })
-
-    // Log the cleanup operation
-    await prisma.dataRetentionLog.create({
-      data: {
-        recordsDeleted: deletedSensorData.count + deletedEvents.count,
-        retentionDays: retentionYears * 365,
-        success: true
-      }
-    })
-
-    return NextResponse.json({
-      success: true,
-      sensorDataDeleted: deletedSensorData.count,
-      eventsDeleted: deletedEvents.count,
-      retentionYears
-    })
-
-  } catch (error) {
-    console.error('Error during data cleanup:', error)
-    
-    // Log the failed cleanup
+    // Default to 2 months retention, but allow override via request body
+    let retentionMonths = 2
     try {
-      await prisma.dataRetentionLog.create({
-        data: {
-          recordsDeleted: 0,
-          retentionDays: 0,
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        }
-      })
-    } catch (logError) {
-      console.error('Error logging cleanup failure:', logError)
+      const body = await request.json()
+      if (body.retentionMonths && typeof body.retentionMonths === 'number') {
+        retentionMonths = body.retentionMonths
+      }
+    } catch {
+      // No body or invalid JSON, use default
     }
 
+    const result = await cleanupOldData(retentionMonths)
+
+    if (result.success) {
+      return NextResponse.json(result)
+    } else {
+      return NextResponse.json(
+        { error: result.error },
+        { status: 500 }
+      )
+    }
+  } catch (error) {
+    console.error('Error during data cleanup:', error)
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    )
+  }
+}
+
+// GET - Fetch cleanup logs (admin only)
+export async function GET() {
+  try {
+    const session = await getServerSession(authOptions)
+    const sessionUser = session?.user as { role?: string } | undefined
+
+    if (sessionUser?.role !== 'ADMIN') {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+
+    const logs = await getCleanupLogs(10)
+    return NextResponse.json(logs)
+  } catch (error) {
+    console.error('Error fetching cleanup logs:', error)
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth/next'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { isValidTimezone } from '@/lib/summary-report'
 
 export async function GET() {
   try {
@@ -19,7 +20,9 @@ export async function GET() {
     })
 
     if (!settings) {
-      // Create default settings if none exist
+      // Create default settings if none exist. The summary-report fields rely
+      // on the column-level defaults declared in the Prisma schema so they're
+      // not repeated here.
       const newSettings = await prisma.notificationSettings.create({
         data: {
           userId: (session as { user: { id: string } }).user.id,
@@ -29,8 +32,8 @@ export async function GET() {
           lowPressureAlert: true,
           lowTemperatureAlert: true,
           sensorErrorAlert: true,
-          missingDataAlert: true
-        }
+          missingDataAlert: true,
+        },
       })
       return NextResponse.json(newSettings)
     }
@@ -57,7 +60,32 @@ export async function PUT(request: NextRequest) {
     }
 
     const data = await request.json()
-    
+
+    // Validate summary-report fields when present so a bad save can't silently
+    // corrupt the schedule into something the cron will refuse to fire on.
+    if ('summaryReportHourLocal' in data) {
+      const hour = Number(data.summaryReportHourLocal)
+      if (!Number.isInteger(hour) || hour < 0 || hour > 23) {
+        return NextResponse.json(
+          { error: 'summaryReportHourLocal must be an integer between 0 and 23' },
+          { status: 400 },
+        )
+      }
+      data.summaryReportHourLocal = hour
+    }
+    if ('summaryReportPeriod' in data && data.summaryReportPeriod !== 'day' && data.summaryReportPeriod !== 'week') {
+      return NextResponse.json(
+        { error: "summaryReportPeriod must be 'day' or 'week'" },
+        { status: 400 },
+      )
+    }
+    if ('summaryReportTimezone' in data && !isValidTimezone(data.summaryReportTimezone)) {
+      return NextResponse.json(
+        { error: 'summaryReportTimezone must be a valid IANA timezone' },
+        { status: 400 },
+      )
+    }
+
     const settings = await prisma.notificationSettings.upsert({
       where: { userId: (session as { user: { id: string } }).user.id },
       update: data,

@@ -50,10 +50,20 @@ model NotificationSettings {
   lowTemperatureAlert  Boolean @default(true)
   sensorErrorAlert     Boolean @default(true)
   missingDataAlert     Boolean @default(true)
-  
+
+  // Scheduled summary report sent via Pushover. Fires at `summaryReportHourLocal`
+  // in `summaryReportTimezone`; for the "week" period it only fires on Monday.
+  // `summaryReportLastSentAt` is a per-hour idempotency guard so the hourly cron
+  // never sends twice in the same target window.
+  summaryReportEnabled    Boolean   @default(false)
+  summaryReportHourLocal  Int       @default(8)
+  summaryReportPeriod     String    @default("day")
+  summaryReportTimezone   String    @default("UTC")
+  summaryReportLastSentAt DateTime?
+
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
-  
+
   @@map("notification_settings")
 }
 

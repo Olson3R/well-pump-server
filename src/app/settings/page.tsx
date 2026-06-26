@@ -28,6 +28,11 @@ interface NotificationSettings {
   lowTemperatureAlert: boolean
   sensorErrorAlert: boolean
   missingDataAlert: boolean
+  // Scheduled summary report delivered via Pushover.
+  summaryReportEnabled: boolean
+  summaryReportHourLocal: number
+  summaryReportPeriod: 'day' | 'week'
+  summaryReportTimezone: string
 }
 
 interface CleanupLog {
@@ -128,6 +133,26 @@ export default function SettingsPage() {
       })
     } finally {
       setCleaningUp(false)
+    }
+  }
+
+  const sendSummaryTest = async () => {
+    setMessage(null)
+    try {
+      const response = await fetch('/api/notifications/summary-test', {
+        method: 'POST',
+      })
+      const data = await response.json()
+      if (response.ok && data.delivered) {
+        setMessage({ type: 'success', text: `Test summary sent (${data.period}).` })
+      } else {
+        throw new Error(data.reason || data.error || 'Send failed')
+      }
+    } catch (error) {
+      setMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Error sending summary',
+      })
     }
   }
 
@@ -342,6 +367,80 @@ export default function SettingsPage() {
                     <label className="ml-2 block text-sm text-gray-900">
                       Enable Pushover notifications
                     </label>
+                  </div>
+                </div>
+
+                {/* Daily / weekly summary report */}
+                <div className="space-y-4 mb-6 pt-4 border-t border-gray-200">
+                  <h4 className="text-sm font-medium text-gray-900">Daily / Weekly Summary</h4>
+                  <p className="text-sm text-gray-500">
+                    Scheduled Pushover digest of pump runs, runtime, and low-pressure events.
+                  </p>
+                  <div className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={notificationSettings.summaryReportEnabled}
+                      onChange={(e) => setNotificationSettings({
+                        ...notificationSettings,
+                        summaryReportEnabled: e.target.checked
+                      })}
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                    />
+                    <label className="ml-2 block text-sm text-gray-900">
+                      Enable scheduled summary report
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Period</label>
+                      <select
+                        value={notificationSettings.summaryReportPeriod}
+                        onChange={(e) => setNotificationSettings({
+                          ...notificationSettings,
+                          summaryReportPeriod: e.target.value as 'day' | 'week'
+                        })}
+                        className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                      >
+                        <option value="day">Daily (last 24h)</option>
+                        <option value="week">Weekly (Mondays, last 7d)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Send at (local hour)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={23}
+                        value={notificationSettings.summaryReportHourLocal}
+                        onChange={(e) => setNotificationSettings({
+                          ...notificationSettings,
+                          summaryReportHourLocal: Math.max(0, Math.min(23, parseInt(e.target.value, 10) || 0))
+                        })}
+                        className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Timezone (IANA)</label>
+                      <input
+                        type="text"
+                        value={notificationSettings.summaryReportTimezone}
+                        onChange={(e) => setNotificationSettings({
+                          ...notificationSettings,
+                          summaryReportTimezone: e.target.value
+                        })}
+                        placeholder="America/New_York"
+                        className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={sendSummaryTest}
+                      className="inline-flex items-center px-3 py-1.5 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                    >
+                      Send test now
+                    </button>
                   </div>
                 </div>
 

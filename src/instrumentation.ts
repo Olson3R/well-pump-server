@@ -22,5 +22,25 @@ export async function register() {
     })
 
     console.log('[Scheduler] Daily cleanup task scheduled for 2:00 AM')
+
+    // Hourly tick that delivers any opted-in user's summary report at the top
+    // of their configured local hour. Per-user idempotency lives inside
+    // `runDueSummaryReports` so a missed/repeated tick is safe.
+    const { runDueSummaryReports } = await import('./lib/summary-report')
+    cron.default.schedule('0 * * * *', async () => {
+      try {
+        const results = await runDueSummaryReports()
+        if (results.length > 0) {
+          const delivered = results.filter((r) => r.delivered).length
+          console.log(
+            `[Scheduler] Summary reports: ${delivered}/${results.length} delivered`,
+          )
+        }
+      } catch (error) {
+        console.error('[Scheduler] Summary report tick failed:', error)
+      }
+    })
+
+    console.log('[Scheduler] Hourly summary-report tick scheduled')
   }
 }

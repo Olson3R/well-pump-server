@@ -37,6 +37,11 @@ function row(minute: number, overrides: Partial<StatsRow> = {}): StatsRow {
 const ON = { dutyCycle1: 100 }
 const LOW = { pressMin: 22 }
 
+// Most legacy tests were written before the run-merge gap existed and rely on
+// every off→on edge being its own run. Opt them out of merging by setting the
+// gap to 0; new tests below exercise the merge behaviour explicitly.
+const NO_MERGE = { ...DEFAULT_STATS_THRESHOLDS, runMergeGapSeconds: 0 }
+
 describe('computeStatsFromRows', () => {
   it('returns all-zero stats for an empty dataset', () => {
     const stats = computeStatsFromRows([])
@@ -76,7 +81,7 @@ describe('computeStatsFromRows', () => {
       row(6, ON),
       row(7, ON),
     ]
-    const stats = computeStatsFromRows(rows)
+    const stats = computeStatsFromRows(rows, NO_MERGE)
     expect(stats.pumpRunCount).toBe(3)
     expect(stats.pumpDurationSeconds).toBe(360)
     expect(stats.averagePumpRunSeconds).toBe(120)
@@ -136,7 +141,7 @@ describe('computeStatsFromRows', () => {
     // Same logical sequence as the multi-run case but shuffled on input.
     const ordered = [row(0, ON), row(1, ON), row(2), row(3, ON)]
     const shuffled = [ordered[2], ordered[0], ordered[3], ordered[1]]
-    const stats = computeStatsFromRows(shuffled)
+    const stats = computeStatsFromRows(shuffled, NO_MERGE)
     expect(stats.pumpRunCount).toBe(2)
     expect(stats.pumpDurationSeconds).toBe(180)
   })
@@ -151,7 +156,7 @@ describe('computeStatsFromRows', () => {
       row(2, { device: 'A' }), // A off
       row(2, { ...ON, device: 'B' }),
     ]
-    const stats = computeStatsFromRows(rows)
+    const stats = computeStatsFromRows(rows, NO_MERGE)
     expect(stats.pumpRunCount).toBe(3) // A:1 + B:2
     // A on-minutes: 2; B on-minutes: 2 => 4 * 60 = 240s
     expect(stats.pumpDurationSeconds).toBe(240)
@@ -162,14 +167,14 @@ describe('computeStatsFromRows', () => {
     // dutyCycle1 is a percentage (0..100), so 5 means "pump ran 5% of the window".
     const rows = [row(0, { dutyCycle1: 5 }), row(1, { dutyCycle1: 5 })]
     const strict = computeStatsFromRows(rows, {
+      ...NO_MERGE,
       dutyCycleThreshold: 10,
-      pressureThreshold: 30,
     })
     expect(strict.pumpRunCount).toBe(0)
 
     const lenient = computeStatsFromRows(rows, {
+      ...NO_MERGE,
       dutyCycleThreshold: 0,
-      pressureThreshold: 30,
     })
     expect(lenient.pumpRunCount).toBe(1)
   })
@@ -186,6 +191,53 @@ describe('computeStatsFromRows', () => {
     expect(stats.pumpRunCount).toBe(1)
     expect(stats.pumpDurationSeconds).toBe(72)
     expect(stats.averagePumpRunSeconds).toBe(72)
+  })
+
+  it('merges two on-stretches separated by a short off gap into one run', () => {
+    // on, off (1-min gap), on. Default mergeGap (120s) bridges the 60s gap so
+    // both on-stretches count as a single physical pump cycle.
+    const rows = [row(0, ON), row(1), row(2, ON)]
+    const stats = computeStatsFromRows(rows)
+    expect(stats.pumpRunCount).toBe(1)
+    // Runtime still reflects the two on-minutes (no runtime accrues during the off).
+    expect(stats.pumpDurationSeconds).toBe(120)
+  })
+
+  it('keeps two on-stretches separate when the off gap exceeds the merge window', () => {
+    // on, off,off,off (3-min gap = 180s), on. Default mergeGap is 120s so the
+    // 180s gap > 120s opens a fresh run.
+    const rows = [row(0, ON), row(1), row(2), row(3), row(4, ON)]
+    const stats = computeStatsFromRows(rows)
+    expect(stats.pumpRunCount).toBe(2)
+  })
+
+  it('treats an off gap exactly equal to the merge window as a continuation', () => {
+    // off period = exactly 120s. Comparison is strict `>` so this still merges.
+    const rows = [row(0, ON), row(1), row(2), row(3, ON)]
+    const stats = computeStatsFromRows(rows)
+    expect(stats.pumpRunCount).toBe(1)
+  })
+
+  it('runMergeGapSeconds=0 reverts to "every off→on edge is a new run"', () => {
+    const rows = [row(0, ON), row(1), row(2, ON)]
+    const stats = computeStatsFromRows(rows, NO_MERGE)
+    expect(stats.pumpRunCount).toBe(2)
+  })
+
+  it('respects a custom merge window', () => {
+    // 4 on-minutes separated by 1-minute off gaps. With a 30s window every gap
+    // opens a new run (4 total); with a 90s window all four merge (1 total).
+    const rows = [row(0, ON), row(1), row(2, ON), row(3), row(4, ON), row(5), row(6, ON)]
+    const tight = computeStatsFromRows(rows, {
+      ...DEFAULT_STATS_THRESHOLDS,
+      runMergeGapSeconds: 30,
+    })
+    expect(tight.pumpRunCount).toBe(4)
+    const wide = computeStatsFromRows(rows, {
+      ...DEFAULT_STATS_THRESHOLDS,
+      runMergeGapSeconds: 90,
+    })
+    expect(wide.pumpRunCount).toBe(1)
   })
 
   it('ignores non-positive window spans (clock skew / zero-length windows)', () => {

@@ -29,6 +29,8 @@ import {
  *   dutyCycleThreshold    Percentage 0..100; row is pump-ON when `dutyCycle1`
  *                         is strictly greater than this (default 0).
  *   pressureThreshold     PSI; low pressure at/below this (default 30).
+ *   runMergeGapSeconds    Two on-stretches separated by an off period ≤ this
+ *                         many seconds are merged into one run (default 120).
  */
 export async function GET(request: NextRequest) {
   try {
@@ -81,6 +83,16 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       )
     }
+    const runMergeGapSeconds = parseThreshold(
+      searchParams.get('runMergeGapSeconds'),
+      DEFAULT_STATS_THRESHOLDS.runMergeGapSeconds
+    )
+    if (runMergeGapSeconds === null) {
+      return NextResponse.json(
+        { error: 'Invalid runMergeGapSeconds: must be a non-negative number' },
+        { status: 400 }
+      )
+    }
 
     // --- Build the filtered WHERE clause ------------------------------------
     const whereSql = Prisma.sql`
@@ -92,10 +104,12 @@ export async function GET(request: NextRequest) {
 
     // --- Single windowed aggregation query ----------------------------------
     // `base`    classifies each row as pump-on (dutyCycle1 > threshold) and
-    //           low-pressure, captures the row's duty cycle, and measures its
-    //           window span (seconds, clamped at 0).
-    // `flagged` looks back one row PER DEVICE to find state transitions.
-    // The final SELECT counts rising edges; pump duration sums
+    //           low-pressure, captures the row's duty cycle, start/end times,
+    //           and measures its window span (seconds, clamped at 0).
+    // `flagged` looks back PER DEVICE to find low-pressure transitions and the
+    //           endTime of the most recent prior on-row (used for run-merging).
+    // The final SELECT counts pump runs (off→on edges that follow a gap longer
+    // than `runMergeGapSeconds`) and sums durations. Pump duration sums
     // `(dutyCycle1 / 100) × window_seconds` so we accrue ACTUAL seconds the
     // pump ran (the /100 converts the percentage to a fraction) rather than
     // full minute windows. Mirrors `computeStatsFromRows` exactly.
@@ -104,6 +118,8 @@ export async function GET(request: NextRequest) {
         SELECT
           device,
           timestamp,
+          "startTime" AS start_time,
+          "endTime" AS end_time,
           "dutyCycle1" AS duty_cycle_1,
           ("dutyCycle1" > ${dutyCycleThreshold}) AS pump_on,
           ("pressMin" <= ${pressureThreshold}) AS low_press,
@@ -117,12 +133,24 @@ export async function GET(request: NextRequest) {
           low_press,
           duty_cycle_1,
           window_seconds,
-          LAG(pump_on) OVER (PARTITION BY device ORDER BY timestamp) AS prev_pump_on,
+          start_time,
+          -- End time of the most recent on-row strictly before this row in the
+          -- same device's stream. NULL until we've seen any on-row.
+          MAX(CASE WHEN pump_on THEN end_time END) OVER (
+            PARTITION BY device
+            ORDER BY timestamp
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+          ) AS prev_on_end_time,
           LAG(low_press) OVER (PARTITION BY device ORDER BY timestamp) AS prev_low_press
         FROM base
       )
       SELECT
-        COUNT(*) FILTER (WHERE pump_on AND prev_pump_on IS DISTINCT FROM TRUE) AS pump_run_count,
+        COUNT(*) FILTER (
+          WHERE pump_on AND (
+            prev_on_end_time IS NULL
+            OR EXTRACT(EPOCH FROM (start_time - prev_on_end_time)) > ${runMergeGapSeconds}
+          )
+        ) AS pump_run_count,
         COALESCE(SUM((duty_cycle_1 / 100.0) * window_seconds) FILTER (WHERE pump_on), 0) AS pump_duration_seconds,
         COUNT(*) FILTER (WHERE low_press AND prev_low_press IS DISTINCT FROM TRUE) AS low_pressure_count,
         COALESCE(SUM(window_seconds) FILTER (WHERE low_press), 0) AS low_pressure_duration_seconds,
@@ -146,7 +174,7 @@ export async function GET(request: NextRequest) {
         endDate: end ? end.toISOString() : null,
         device: device ?? null,
       },
-      thresholds: { dutyCycleThreshold, pressureThreshold },
+      thresholds: { dutyCycleThreshold, pressureThreshold, runMergeGapSeconds },
     })
   } catch (error) {
     console.error('Error computing stats:', error)

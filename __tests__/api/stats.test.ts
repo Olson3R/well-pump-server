@@ -126,7 +126,11 @@ describe('GET /api/stats', () => {
     const response = await GET(new NextRequest(url()))
     const data = await response.json()
 
-    expect(data.thresholds).toEqual({ dutyCycleThreshold: 0, pressureThreshold: 30 })
+    expect(data.thresholds).toEqual({
+      dutyCycleThreshold: 0,
+      pressureThreshold: 30,
+      runMergeGapSeconds: 120,
+    })
   })
 
   it('binds date range, device and custom thresholds into the query', async () => {
@@ -138,7 +142,7 @@ describe('GET /api/stats', () => {
       new NextRequest(
         url(
           `?startDate=${startDate}&endDate=${endDate}&device=well-pump-monitor` +
-            `&dutyCycleThreshold=0.05&pressureThreshold=25`
+            `&dutyCycleThreshold=0.05&pressureThreshold=25&runMergeGapSeconds=60`
         )
       )
     )
@@ -148,6 +152,7 @@ describe('GET /api/stats', () => {
     // Thresholds appear first (in the CTE), then the WHERE bindings.
     expect(values).toContain(0.05)
     expect(values).toContain(25)
+    expect(values).toContain(60)
     expect(values).toContain('well-pump-monitor')
     expect(values.some((v) => v instanceof Date && v.toISOString() === startDate)).toBe(true)
     expect(values.some((v) => v instanceof Date && v.toISOString() === endDate)).toBe(true)
@@ -157,7 +162,11 @@ describe('GET /api/stats', () => {
       endDate,
       device: 'well-pump-monitor',
     })
-    expect(data.thresholds).toEqual({ dutyCycleThreshold: 0.05, pressureThreshold: 25 })
+    expect(data.thresholds).toEqual({
+      dutyCycleThreshold: 0.05,
+      pressureThreshold: 25,
+      runMergeGapSeconds: 60,
+    })
   })
 
   it('does not bind a device filter when none is given', async () => {
@@ -165,8 +174,8 @@ describe('GET /api/stats', () => {
 
     await GET(new NextRequest(url()))
 
-    // Only the two thresholds should be bound — no date/device params.
-    expect(boundValues()).toEqual([0, 30])
+    // Bound values: dutyCycleThreshold, pressureThreshold, runMergeGapSeconds.
+    expect(boundValues()).toEqual([0, 30, 120])
   })
 
   describe('validation', () => {
@@ -208,6 +217,13 @@ describe('GET /api/stats', () => {
       const data = await response.json()
       expect(response.status).toBe(400)
       expect(data.error).toContain('Invalid pressureThreshold')
+    })
+
+    it('rejects a negative runMergeGapSeconds', async () => {
+      const response = await GET(new NextRequest(url('?runMergeGapSeconds=-5')))
+      const data = await response.json()
+      expect(response.status).toBe(400)
+      expect(data.error).toContain('Invalid runMergeGapSeconds')
     })
   })
 

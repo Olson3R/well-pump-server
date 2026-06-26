@@ -42,6 +42,17 @@ export interface StatsThresholds {
   dutyCycleThreshold: number
   /** System is considered LOW PRESSURE when `pressMin` is at or below this PSI. */
   pressureThreshold: number
+  /**
+   * Two on-stretches separated by an off period this long (in seconds) or less
+   * are merged into a single run. Compensates for per-minute sampling artefacts
+   * where one physical pump cycle reports as alternating on/off minutes because
+   * the 60-second windows happen to land on the pump's brief quiescent periods.
+   *
+   * 0 disables merging (every off→on edge counts as a new run, the original
+   * behaviour). Default 120s collapses single-minute gaps into one run while
+   * keeping genuinely distinct cycles separate.
+   */
+  runMergeGapSeconds: number
 }
 
 /**
@@ -51,12 +62,16 @@ export interface StatsThresholds {
  *    Raise to e.g. 1 to filter brief transients (require ≥1% of window).
  *  - pressureThreshold 30 PSI: a standard cut-in pressure; dipping to/below it
  *    indicates the system is struggling to keep up (a low-pressure condition).
+ *  - runMergeGapSeconds 120: bridge ≤2-minute gaps in the on-signal so one
+ *    physical pump cycle isn't counted as multiple runs when minute-level
+ *    sampling momentarily reports 0%.
  *
- * Both can be overridden per-request via query parameters.
+ * All overridable per-request via query parameters.
  */
 export const DEFAULT_STATS_THRESHOLDS: StatsThresholds = {
   dutyCycleThreshold: 0,
   pressureThreshold: 30,
+  runMergeGapSeconds: 120,
 }
 
 /** Minimal shape of a raw sensor row required to derive stats. */
@@ -163,8 +178,14 @@ function orderKey(row: StatsRow): number {
  *
  * Rows are grouped by device, ordered chronologically, and walked once. A row is
  * "pump on" when `dutyCycle1 > dutyCycleThreshold` and "low pressure" when
- * `pressMin <= pressureThreshold`. Each off→on edge increments the run count and
- * each normal→low edge increments the low-pressure event count.
+ * `pressMin <= pressureThreshold`. Each normal→low edge increments the
+ * low-pressure event count.
+ *
+ * Pump runs use a MERGE GAP: an off→on edge only counts as a new run when the
+ * end of the previous on-row is more than `runMergeGapSeconds` before the start
+ * of the current on-row. Otherwise the on-row continues the previous run. This
+ * absorbs the per-minute sampling artefact where one physical cycle reports as
+ * alternating on/off minutes.
  *
  * Pump runtime accrues `(dutyCycle1 / 100) × windowSeconds` per row — the actual
  * time the pump ran during that minute, not the full window — so a row with a
@@ -179,7 +200,8 @@ export function computeStatsFromRows(
   rows: readonly StatsRow[],
   thresholds: StatsThresholds = DEFAULT_STATS_THRESHOLDS,
 ): AggregatedStats {
-  const { dutyCycleThreshold, pressureThreshold } = thresholds
+  const { dutyCycleThreshold, pressureThreshold, runMergeGapSeconds } = thresholds
+  const mergeGapMs = Math.max(0, runMergeGapSeconds) * MS_PER_SECOND
 
   const totals: RawStatTotals = {
     pumpRunCount: 0,
@@ -201,8 +223,11 @@ export function computeStatsFromRows(
   for (const group of groups.values()) {
     const ordered = [...group].sort((a, b) => orderKey(a) - orderKey(b))
 
-    let prevPumpOn = false
     let prevLowPress = false
+    // End time of the most recent on-row in this device's stream. `null` until
+    // we've seen any on-row; used to decide whether the next on-row continues
+    // the current run or starts a new one.
+    let lastOnEndMs: number | null = null
 
     for (const row of ordered) {
       const pumpOn = row.dutyCycle1 > dutyCycleThreshold
@@ -210,8 +235,12 @@ export function computeStatsFromRows(
       const seconds = windowSeconds(row)
 
       if (pumpOn) {
-        if (!prevPumpOn) totals.pumpRunCount += 1
+        const rowStartMs = toMillis(row.startTime)
+        if (lastOnEndMs === null || rowStartMs - lastOnEndMs > mergeGapMs) {
+          totals.pumpRunCount += 1
+        }
         totals.pumpDurationSeconds += (row.dutyCycle1 / 100) * seconds
+        lastOnEndMs = toMillis(row.endTime)
       }
 
       if (lowPress) {
@@ -219,7 +248,6 @@ export function computeStatsFromRows(
         totals.lowPressureDurationSeconds += seconds
       }
 
-      prevPumpOn = pumpOn
       prevLowPress = lowPress
     }
   }

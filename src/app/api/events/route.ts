@@ -51,6 +51,22 @@ export async function POST(request: NextRequest) {
     const duration = BigInt(data.duration)
     const isActive = data.active
 
+    // Guard against device clock errors — same rationale as /api/sensors.
+    const FUTURE_TOLERANCE_MS = 5 * 60 * 1000
+    const nowMs = Date.now()
+    if (
+      timestamp.getTime() > nowMs + FUTURE_TOLERANCE_MS ||
+      startTime.getTime() > nowMs + FUTURE_TOLERANCE_MS
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'Timestamp is too far in the future — check the device clock (NTP / RTC).',
+        },
+        { status: 400 }
+      )
+    }
+
     // Find existing active event of the same type for this device
     const existingEvent = await prisma.event.findFirst({
       where: {

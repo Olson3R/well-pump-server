@@ -33,11 +33,36 @@ export async function POST(request: NextRequest) {
     }
 
     // Convert timestamp strings to Date objects
+    const timestamp = new Date(parseInt(data.timestamp))
+    const startTime = new Date(parseInt(data.startTime))
+    const endTime = new Date(parseInt(data.endTime))
+
+    // Guard against device clock errors. A row whose ESP32-supplied timestamp
+    // is far in the future poisons "latest" queries (ORDER BY timestamp DESC
+    // would permanently surface the bogus row). Reject anything more than five
+    // minutes ahead of server time so the device can retry once its clock is
+    // corrected.
+    const FUTURE_TOLERANCE_MS = 5 * 60 * 1000
+    const nowMs = Date.now()
+    if (
+      timestamp.getTime() > nowMs + FUTURE_TOLERANCE_MS ||
+      startTime.getTime() > nowMs + FUTURE_TOLERANCE_MS ||
+      endTime.getTime() > nowMs + FUTURE_TOLERANCE_MS
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'Timestamp is too far in the future — check the device clock (NTP / RTC).',
+        },
+        { status: 400 }
+      )
+    }
+
     const sensorData = {
       ...data,
-      timestamp: new Date(parseInt(data.timestamp)),
-      startTime: new Date(parseInt(data.startTime)),
-      endTime: new Date(parseInt(data.endTime))
+      timestamp,
+      startTime,
+      endTime,
     }
 
     // Save to database

@@ -14,7 +14,8 @@ import {
 } from '@/lib/stats'
 
 // One row per "minute". A pump-on row carries a non-zero dutyCycle1; off rows
-// have dutyCycle1 = 0. Pressure stays normal unless explicitly set low.
+// have dutyCycle1 = 0. `dutyCycle1` is a PERCENTAGE (0..100), matching what the
+// ESP32 firmware actually emits. Pressure stays normal unless explicitly set low.
 const MINUTE = 60 * 1000
 const BASE = Date.parse('2026-01-01T00:00:00.000Z')
 
@@ -30,10 +31,10 @@ function row(minute: number, overrides: Partial<StatsRow> = {}): StatsRow {
   }
 }
 
-// Default ON = pump ran for the full minute (duty 1.0), so each on-row accrues
+// Default ON = pump ran for the full minute (duty 100%), so each on-row accrues
 // 60s of runtime. Individual tests can override dutyCycle1 to model partial
 // duty windows.
-const ON = { dutyCycle1: 1.0 }
+const ON = { dutyCycle1: 100 }
 const LOW = { pressMin: 22 }
 
 describe('computeStatsFromRows', () => {
@@ -119,10 +120,10 @@ describe('computeStatsFromRows', () => {
   it('treats pressure exactly at the threshold as low (inclusive bound)', () => {
     // Pump uses a strict `>` comparison: dutyCycle1 must exceed the threshold.
     // Default threshold 0 + any non-zero duty registers as on; here we pick a
-    // tiny positive value so the row clearly counts as a run.
+    // tiny positive percentage so the row clearly counts as a run.
     const rows = [
       row(0, {
-        dutyCycle1: 0.01,
+        dutyCycle1: 1, // 1% duty
         pressMin: DEFAULT_STATS_THRESHOLDS.pressureThreshold, // exactly low
       }),
     ]
@@ -158,9 +159,10 @@ describe('computeStatsFromRows', () => {
 
   it('respects custom thresholds', () => {
     // With a high duty-cycle threshold, a brief activation no longer counts.
-    const rows = [row(0, { dutyCycle1: 0.05 }), row(1, { dutyCycle1: 0.05 })]
+    // dutyCycle1 is a percentage (0..100), so 5 means "pump ran 5% of the window".
+    const rows = [row(0, { dutyCycle1: 5 }), row(1, { dutyCycle1: 5 })]
     const strict = computeStatsFromRows(rows, {
-      dutyCycleThreshold: 0.1,
+      dutyCycleThreshold: 10,
       pressureThreshold: 30,
     })
     expect(strict.pumpRunCount).toBe(0)
@@ -176,9 +178,9 @@ describe('computeStatsFromRows', () => {
     // Three minute-long windows, each with the pump running 40% of the time.
     // Total runtime = 3 × 60s × 0.4 = 72s; all three rows form one continuous run.
     const rows = [
-      row(0, { dutyCycle1: 0.4 }),
-      row(1, { dutyCycle1: 0.4 }),
-      row(2, { dutyCycle1: 0.4 }),
+      row(0, { dutyCycle1: 40 }),
+      row(1, { dutyCycle1: 40 }),
+      row(2, { dutyCycle1: 40 }),
     ]
     const stats = computeStatsFromRows(rows)
     expect(stats.pumpRunCount).toBe(1)

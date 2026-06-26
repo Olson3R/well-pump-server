@@ -26,8 +26,8 @@ import {
  * Query params (all optional):
  *   startDate, endDate    ISO timestamps bounding the range (inclusive).
  *   device                restrict to a single device.
- *   dutyCycleThreshold    Fraction 0..1; row is pump-ON when `dutyCycle1` is
- *                         strictly greater than this (default 0).
+ *   dutyCycleThreshold    Percentage 0..100; row is pump-ON when `dutyCycle1`
+ *                         is strictly greater than this (default 0).
  *   pressureThreshold     PSI; low pressure at/below this (default 30).
  */
 export async function GET(request: NextRequest) {
@@ -96,8 +96,9 @@ export async function GET(request: NextRequest) {
     //           window span (seconds, clamped at 0).
     // `flagged` looks back one row PER DEVICE to find state transitions.
     // The final SELECT counts rising edges; pump duration sums
-    // `dutyCycle1 × window_seconds` so we accrue ACTUAL seconds the pump ran
-    // rather than full minute windows. Mirrors `computeStatsFromRows` exactly.
+    // `(dutyCycle1 / 100) × window_seconds` so we accrue ACTUAL seconds the
+    // pump ran (the /100 converts the percentage to a fraction) rather than
+    // full minute windows. Mirrors `computeStatsFromRows` exactly.
     const rawRows = await prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
       WITH base AS (
         SELECT
@@ -122,7 +123,7 @@ export async function GET(request: NextRequest) {
       )
       SELECT
         COUNT(*) FILTER (WHERE pump_on AND prev_pump_on IS DISTINCT FROM TRUE) AS pump_run_count,
-        COALESCE(SUM(duty_cycle_1 * window_seconds) FILTER (WHERE pump_on), 0) AS pump_duration_seconds,
+        COALESCE(SUM((duty_cycle_1 / 100.0) * window_seconds) FILTER (WHERE pump_on), 0) AS pump_duration_seconds,
         COUNT(*) FILTER (WHERE low_press AND prev_low_press IS DISTINCT FROM TRUE) AS low_pressure_count,
         COALESCE(SUM(window_seconds) FILTER (WHERE low_press), 0) AS low_pressure_duration_seconds,
         COUNT(*) AS sample_count

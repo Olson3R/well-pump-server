@@ -837,10 +837,10 @@ export default function DataPage() {
                           {row.current2RMS.toFixed(2)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {(row.dutyCycle1 * 100).toFixed(1)}
+                          {row.dutyCycle1.toFixed(1)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {(row.dutyCycle2 * 100).toFixed(1)}
+                          {row.dutyCycle2.toFixed(1)}
                         </td>
                       </tr>
                     ))}

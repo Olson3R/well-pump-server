@@ -3,10 +3,10 @@
  *
  * The well-pump monitor stores raw `SensorData` rows (~1 row/minute), each row
  * being a summary over a short sampling window (`startTime` → `endTime`). Each
- * row carries `dutyCycle1` — the fraction of that window the pump was actually
- * drawing pump-level current, as classified by the ESP32 at its high sampling
- * rate. From this raw data we derive higher-level operational stats over an
- * arbitrary time range:
+ * row carries `dutyCycle1` — the PERCENTAGE (0..100) of that window the pump
+ * was actually drawing pump-level current, as classified by the ESP32 at its
+ * high sampling rate. From this raw data we derive higher-level operational
+ * stats over an arbitrary time range:
  *
  *   - pump run count          (how many times the pump started)
  *   - total pump duration     (how long the pump ran in total)
@@ -22,9 +22,9 @@
  * Runs and low-pressure events are derived from STATE TRANSITIONS: each row is
  * classified as pump-on/off (dutyCycle1 > threshold) and low/normal pressure;
  * a new run (or event) is counted on every off→on (or normal→low) edge. Total
- * pump duration is the sum of `dutyCycle1 × windowSeconds` (actual seconds the
- * pump ran), while low-pressure duration sums the full window of every row in
- * the low state.
+ * pump duration is the sum of `(dutyCycle1 / 100) × windowSeconds` (actual
+ * seconds the pump ran — the /100 converts the percentage to a fraction). Low-
+ * pressure duration sums the full window of every row in the low state.
  *
  * The production endpoint (`/api/stats`) performs this aggregation server-side in
  * a single SQL query (window functions) so it stays cheap for long ranges. This
@@ -37,7 +37,7 @@
 export interface StatsThresholds {
   /**
    * Pump is considered ON in a row when `dutyCycle1` is strictly greater than
-   * this fraction (0..1). Default 0 — any non-zero pump activity counts.
+   * this percentage (0..100). Default 0 — any non-zero pump activity counts.
    */
   dutyCycleThreshold: number
   /** System is considered LOW PRESSURE when `pressMin` is at or below this PSI. */
@@ -48,7 +48,7 @@ export interface StatsThresholds {
  * Sensible defaults for a typical residential well-pump system.
  *
  *  - dutyCycleThreshold 0: any non-zero pump activity in a row counts as ON.
- *    Raise to e.g. 0.01 to filter sensor noise / brief transients if needed.
+ *    Raise to e.g. 1 to filter brief transients (require ≥1% of window).
  *  - pressureThreshold 30 PSI: a standard cut-in pressure; dipping to/below it
  *    indicates the system is struggling to keep up (a low-pressure condition).
  *
@@ -68,8 +68,8 @@ export interface StatsRow {
   /** End of the sampling window. */
   endTime: Date | string | number
   /**
-   * Fraction (0..1) of the sampling window the pump was actually running, as
-   * classified by the ESP32. Drives both run detection and runtime accrual.
+   * Percentage (0..100) of the sampling window the pump was actually running,
+   * as classified by the ESP32. Drives both run detection and runtime accrual.
    */
   dutyCycle1: number
   /** Minimum pressure observed in the window (PSI). */
@@ -166,10 +166,11 @@ function orderKey(row: StatsRow): number {
  * `pressMin <= pressureThreshold`. Each off→on edge increments the run count and
  * each normal→low edge increments the low-pressure event count.
  *
- * Pump runtime accrues `dutyCycle1 × windowSeconds` per row — the actual time
- * the pump ran during that minute, not the full window — so a row with a 40%
- * duty cycle over a 60s window contributes 24s, not 60s. Low-pressure duration
- * still accrues the full window span of every low row.
+ * Pump runtime accrues `(dutyCycle1 / 100) × windowSeconds` per row — the actual
+ * time the pump ran during that minute, not the full window — so a row with a
+ * 40% duty cycle over a 60s window contributes 24s, not 60s. The /100 converts
+ * the 0..100 percentage to a 0..1 fraction. Low-pressure duration still accrues
+ * the full window span of every low row.
  *
  * This mirrors the SQL executed by `/api/stats` exactly. It is used directly by
  * the test-suite and is safe to call from server code as a fallback.
@@ -210,7 +211,7 @@ export function computeStatsFromRows(
 
       if (pumpOn) {
         if (!prevPumpOn) totals.pumpRunCount += 1
-        totals.pumpDurationSeconds += row.dutyCycle1 * seconds
+        totals.pumpDurationSeconds += (row.dutyCycle1 / 100) * seconds
       }
 
       if (lowPress) {

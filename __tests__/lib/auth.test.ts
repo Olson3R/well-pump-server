@@ -26,7 +26,11 @@ describe('Auth Configuration', () => {
   })
 
   describe('CredentialsProvider', () => {
-    const credentialsProvider = authOptions.providers[0]
+    // next-auth's CredentialsProvider stores the user-supplied `authorize`
+    // implementation under `.options` (the top-level `.authorize` is the
+    // library's default stub). Exercise the real implementation.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const credentialsProvider = (authOptions.providers[0] as any).options
 
     it('should return null for missing credentials', async () => {
       const result = await credentialsProvider.authorize({})

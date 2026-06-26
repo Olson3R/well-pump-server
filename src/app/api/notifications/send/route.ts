@@ -1,131 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
-import webpush from 'web-push'
+import { dispatchNotifications } from '@/lib/notifications'
 
-// Configure web-push with VAPID details
-if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
-  webpush.setVapidDetails(
-    'mailto:admin@wellpump.local',
-    process.env.VAPID_PUBLIC_KEY,
-    process.env.VAPID_PRIVATE_KEY
-  )
-}
-
+/**
+ * Internal endpoint to dispatch a notification across all channels (web-push +
+ * Pushover). Protected by the internal API key. The actual sending logic lives
+ * in `@/lib/notifications` so it can be shared with the event-ingestion path.
+ */
 export async function POST(request: NextRequest) {
   try {
-    // This endpoint should be protected by API key or internal-only access
     const apiKey = request.headers.get('x-api-key')
     if (apiKey !== process.env.INTERNAL_API_KEY) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const { eventType, title, body, data } = await request.json()
 
-    // Get all users with push notifications enabled for this event type
-    const notificationSettings = await prisma.notificationSettings.findMany({
-      where: {
-        pushEnabled: true,
-        pushEndpoint: { not: null },
-        ...(eventType === 'HIGH_CURRENT' && { highCurrentAlert: true }),
-        ...(eventType === 'LOW_PRESSURE' && { lowPressureAlert: true }),
-        ...(eventType === 'LOW_TEMPERATURE' && { lowTemperatureAlert: true }),
-        ...(eventType === 'SENSOR_ERROR' && { sensorErrorAlert: true }),
-        ...(eventType === 'MISSING_DATA' && { missingDataAlert: true })
-      },
-      include: { user: true }
-    })
+    if (!eventType || !title || !body) {
+      return NextResponse.json(
+        { error: 'eventType, title and body are required' },
+        { status: 400 }
+      )
+    }
 
-    // Send push notifications
-    const notifications = notificationSettings.map(async (settings) => {
-      if (!settings.pushEndpoint || !settings.pushKeys) return
-
-      const pushSubscription = {
-        endpoint: settings.pushEndpoint,
-        keys: settings.pushKeys as { p256dh: string; auth: string }
-      }
-
-      try {
-        await webpush.sendNotification(
-          pushSubscription,
-          JSON.stringify({
-            title,
-            body,
-            icon: '/icons/icon-192x192.png',
-            badge: '/icons/icon-72x72.png',
-            data: {
-              ...data,
-              url: '/alerts'
-            }
-          })
-        )
-      } catch (error) {
-        console.error('Error sending push notification:', error)
-        // If push fails, disable it for this user
-        if ((error as { statusCode?: number }).statusCode === 410) {
-          await prisma.notificationSettings.update({
-            where: { id: settings.id },
-            data: {
-              pushEnabled: false,
-              pushEndpoint: null,
-              pushKeys: undefined
-            }
-          })
-        }
-      }
-    })
-
-    // Send Pushover notifications
-    const pushoverSettings = await prisma.notificationSettings.findMany({
-      where: {
-        pushoverEnabled: true,
-        pushoverToken: { not: null },
-        pushoverUser: { not: null },
-        ...(eventType === 'HIGH_CURRENT' && { highCurrentAlert: true }),
-        ...(eventType === 'LOW_PRESSURE' && { lowPressureAlert: true }),
-        ...(eventType === 'LOW_TEMPERATURE' && { lowTemperatureAlert: true }),
-        ...(eventType === 'SENSOR_ERROR' && { sensorErrorAlert: true }),
-        ...(eventType === 'MISSING_DATA' && { missingDataAlert: true })
-      }
-    })
-
-    const pushoverNotifications = pushoverSettings.map(async (settings) => {
-      if (!settings.pushoverToken || !settings.pushoverUser) return
-
-      try {
-        const response = await fetch('https://api.pushover.net/1/messages.json', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            token: settings.pushoverToken,
-            user: settings.pushoverUser,
-            title,
-            message: body,
-            priority: eventType === 'SENSOR_ERROR' || eventType === 'SYSTEM_ERROR' ? 1 : 0,
-            url: `${process.env.NEXTAUTH_URL}/alerts`,
-            url_title: 'View Alerts'
-          })
-        })
-
-        if (!response.ok) {
-          console.error('Pushover API error:', await response.text())
-        }
-      } catch (error) {
-        console.error('Error sending Pushover notification:', error)
-      }
-    })
-
-    await Promise.all([...notifications, ...pushoverNotifications])
+    const summary = await dispatchNotifications({ eventType, title, body, data })
 
     return NextResponse.json({
       success: true,
-      notificationsSent: notificationSettings.length + pushoverSettings.length
+      notificationsSent: summary.succeeded,
+      summary,
     })
-
   } catch (error) {
     console.error('Error sending notifications:', error)
     return NextResponse.json(

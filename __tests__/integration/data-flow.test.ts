@@ -1,3 +1,9 @@
+/**
+ * @jest-environment node
+ *
+ * API route handlers rely on the Web `Request`/`Response` globals that Next.js
+ * provides under the Node test environment (they are absent under jsdom).
+ */
 import { NextRequest } from 'next/server'
 import { POST as sensorPost } from '@/app/api/sensors/route'
 import { POST as eventPost } from '@/app/api/events/route'
@@ -14,6 +20,7 @@ jest.mock('@/lib/prisma', () => ({
     },
     event: {
       create: jest.fn(),
+      findFirst: jest.fn(),
       count: jest.fn(),
     },
     user: {
@@ -21,6 +28,26 @@ jest.mock('@/lib/prisma', () => ({
     },
     $queryRaw: jest.fn(),
   },
+}))
+
+// Ingestion routes require an authenticated device token; grant access in tests.
+jest.mock('@/lib/auth-middleware', () => ({
+  getAuthContext: jest.fn().mockResolvedValue({
+    type: 'device',
+    permissions: ['sensors', 'events'],
+  }),
+  hasPermission: jest.fn().mockReturnValue(true),
+}))
+
+// Isolate the flow from the notification subsystem (a new event dispatches one).
+jest.mock('@/lib/notifications', () => ({
+  dispatchEventNotifications: jest.fn().mockResolvedValue({
+    eventType: 'TEST',
+    attempted: 0,
+    succeeded: 0,
+    failed: 0,
+    results: [],
+  }),
 }))
 
 const mockPrisma = prisma as jest.Mocked<typeof prisma>

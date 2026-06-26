@@ -1,3 +1,9 @@
+/**
+ * @jest-environment node
+ *
+ * API route handlers rely on the Web `Request`/`Response` globals that Next.js
+ * provides under the Node test environment (they are absent under jsdom).
+ */
 import { NextRequest } from 'next/server'
 import { GET } from '@/app/api/health/route'
 import { prisma } from '@/lib/prisma'
@@ -8,6 +14,7 @@ jest.mock('@/lib/prisma', () => ({
     $queryRaw: jest.fn(),
     sensorData: {
       findFirst: jest.fn(),
+      count: jest.fn(),
     },
     event: {
       count: jest.fn(),
@@ -25,6 +32,9 @@ describe('/api/health', () => {
     jest.clearAllMocks()
     jest.useFakeTimers()
     jest.setSystemTime(new Date('2023-01-01T12:00:00.000Z'))
+    // The health route includes a total sensor-record count in its stats; give it
+    // a numeric default so every test does not have to stub it explicitly.
+    mockPrisma.sensorData.count.mockResolvedValue(0)
   })
 
   afterEach(() => {

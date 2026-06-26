@@ -78,6 +78,9 @@ export function Navigation() {
           <div className="md:hidden flex items-center">
             <button
               onClick={() => setIsOpen(!isOpen)}
+              aria-label="Toggle menu"
+              aria-expanded={isOpen}
+              aria-controls="mobile-menu"
               className="inline-flex items-center justify-center p-2 rounded-md text-blue-100 hover:text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white"
             >
               {isOpen ? (
@@ -91,7 +94,7 @@ export function Navigation() {
       </div>
 
       {isOpen && (
-        <div className="md:hidden">
+        <div className="md:hidden" id="mobile-menu" data-testid="mobile-menu">
           <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3 bg-blue-700">
             {navigation.map((item) => {
               const Icon = item.icon

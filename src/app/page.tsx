@@ -2,12 +2,16 @@
 
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { Navigation } from '@/components/Navigation'
-import { useEffect, useState } from 'react'
-import { 
+import { LastUpdated } from '@/components/LastUpdated'
+import { StatsSummary } from '@/components/StatsSummary'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
+import { useCallback, useState } from 'react'
+import {
   ExclamationTriangleIcon,
   CheckCircleIcon,
   SignalIcon,
-  ClockIcon
+  ClockIcon,
+  ArrowPathIcon
 } from '@heroicons/react/24/outline'
 
 interface SensorData {
@@ -34,48 +38,57 @@ export default function Dashboard() {
   const [latestData, setLatestData] = useState<SensorData | null>(null)
   const [activeEvents, setActiveEvents] = useState<Event[]>([])
   const [systemStatus, setSystemStatus] = useState<'healthy' | 'warning' | 'error'>('healthy')
-  const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    fetchLatestData()
-    fetchActiveEvents()
-    
-    // Set up polling every 30 seconds
-    const interval = setInterval(() => {
-      fetchLatestData()
-      fetchActiveEvents()
-    }, 30000)
+  /**
+   * Single refresh pass for the whole dashboard: pull the latest reading and
+   * the active events together. Both fetches share the {@link AbortSignal} so an
+   * unmount (or a superseding refresh) cancels them cleanly. Throwing on failure
+   * lets {@link useAutoRefresh} surface the error and keeps `lastUpdated`
+   * pinned to the last *successful* load.
+   */
+  const refreshDashboard = useCallback(async (signal: AbortSignal) => {
+    try {
+      const [sensorRes, eventsRes] = await Promise.all([
+        fetch('/api/sensors?limit=1', { signal }),
+        fetch('/api/events?active=true&limit=10', { signal }),
+      ])
 
-    return () => clearInterval(interval)
+      if (!sensorRes.ok) {
+        throw new Error(`Sensors request failed (${sensorRes.status})`)
+      }
+      if (!eventsRes.ok) {
+        throw new Error(`Events request failed (${eventsRes.status})`)
+      }
+
+      const [sensorResult, eventsResult] = await Promise.all([
+        sensorRes.json(),
+        eventsRes.json(),
+      ])
+
+      const reading: SensorData | null =
+        Array.isArray(sensorResult.data) && sensorResult.data.length > 0
+          ? sensorResult.data[0]
+          : null
+      const events: Event[] = Array.isArray(eventsResult.data)
+        ? eventsResult.data
+        : []
+
+      setLatestData(reading)
+      setActiveEvents(events)
+      setSystemStatus(events.length > 0 ? 'warning' : 'healthy')
+    } catch (err) {
+      // Ignore deliberate cancellations; only real failures flip the status.
+      if (signal.aborted) return
+      console.error('Error refreshing dashboard:', err)
+      setSystemStatus('error')
+      throw err
+    }
   }, [])
 
-  const fetchLatestData = async () => {
-    try {
-      const response = await fetch('/api/sensors?limit=1')
-      const result = await response.json()
-      if (result.data && result.data.length > 0) {
-        setLatestData(result.data[0])
-      }
-    } catch (error) {
-      console.error('Error fetching latest data:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const fetchActiveEvents = async () => {
-    try {
-      const response = await fetch('/api/events?active=true&limit=10')
-      const result = await response.json()
-      if (result.data) {
-        setActiveEvents(result.data)
-        setSystemStatus(result.data.length > 0 ? 'warning' : 'healthy')
-      }
-    } catch (error) {
-      console.error('Error fetching active events:', error)
-      setSystemStatus('error')
-    }
-  }
+  const { loading, lastUpdated, error, isPaused, refresh } = useAutoRefresh(
+    refreshDashboard,
+    { intervalMs: 60_000 }
+  )
 
   const getStatusColor = () => {
     switch (systemStatus) {
@@ -109,7 +122,33 @@ export default function Dashboard() {
                 Real-time well pump monitoring and status
               </p>
             </div>
+            <div className="mt-4 flex items-center md:mt-0 md:ml-4 space-x-4">
+              <LastUpdated
+                date={lastUpdated}
+                loading={loading}
+                isPaused={isPaused}
+              />
+              <button
+                onClick={() => { void refresh() }}
+                disabled={loading}
+                className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                aria-label="Refresh dashboard"
+              >
+                <ArrowPathIcon className={`h-5 w-5 mr-2 ${loading ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+            </div>
           </div>
+
+          {/* Error banner — only shown once a refresh has actually failed. */}
+          {error && (
+            <div
+              role="alert"
+              className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-4 mb-6"
+            >
+              Failed to update dashboard data. Retrying automatically…
+            </div>
+          )}
 
           {/* Status Overview */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
@@ -165,7 +204,7 @@ export default function Dashboard() {
                   <div className="ml-5 w-0 flex-1">
                     <dl>
                       <dt className="text-sm font-medium text-gray-500 truncate">
-                        Last Update
+                        Last Reading
                       </dt>
                       <dd className="text-lg font-medium text-gray-900">
                         {latestData ? new Date(latestData.timestamp).toLocaleTimeString() : 'N/A'}
@@ -197,6 +236,9 @@ export default function Dashboard() {
             </div>
           </div>
 
+          {/* Aggregated operational stats (own range selector + auto-refresh) */}
+          <StatsSummary className="mb-6" />
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Current Readings */}
             <div className="bg-white shadow rounded-lg">
@@ -204,8 +246,12 @@ export default function Dashboard() {
                 <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
                   Current Readings
                 </h3>
-                {loading ? (
-                  <div className="flex justify-center py-4">
+                {loading && !latestData ? (
+                  <div
+                    className="flex justify-center py-4"
+                    role="status"
+                    aria-label="Loading current readings"
+                  >
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
                   </div>
                 ) : latestData ? (

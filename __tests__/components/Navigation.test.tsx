@@ -1,13 +1,17 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import { Navigation } from '@/components/Navigation'
 
 // Mock next-auth
 const mockSignOut = jest.fn()
 const mockUseSession = jest.fn()
 
+// Reference the mocks lazily: the jest.mock factory is hoisted above the `const`
+// declarations, so calling them directly there would hit the temporal dead zone.
+// Wrapping in arrow functions defers the lookup until the mocked hook is actually
+// invoked (by which time the consts are initialised).
 jest.mock('next-auth/react', () => ({
-  useSession: mockUseSession,
-  signOut: mockSignOut,
+  useSession: (...args: unknown[]) => mockUseSession(...args),
+  signOut: (...args: unknown[]) => mockSignOut(...args),
 }))
 
 // Mock next/navigation
@@ -59,16 +63,22 @@ describe('Navigation', () => {
 
   it('toggles mobile menu', () => {
     render(<Navigation />)
-    
-    // Mobile menu should not be visible initially
-    expect(screen.queryByText('testuser (ADMIN)')).not.toBeVisible()
-    
-    // Click hamburger menu
+
+    // The mobile menu panel is not mounted until the hamburger is toggled open.
+    // (Visibility here is driven by mount/unmount, not CSS — jsdom does not apply
+    // the Tailwind responsive classes that hide it on desktop.)
+    expect(screen.queryByTestId('mobile-menu')).not.toBeInTheDocument()
+
     const menuButton = screen.getByRole('button', { name: /menu/i })
+    expect(menuButton).toHaveAttribute('aria-expanded', 'false')
+
     fireEvent.click(menuButton)
-    
-    // Mobile menu should be visible
-    expect(screen.getByText('testuser (ADMIN)')).toBeVisible()
+
+    // Mobile menu panel is now open and exposes the signed-in user.
+    const mobileMenu = screen.getByTestId('mobile-menu')
+    expect(mobileMenu).toBeInTheDocument()
+    expect(menuButton).toHaveAttribute('aria-expanded', 'true')
+    expect(within(mobileMenu).getByText('testuser (ADMIN)')).toBeInTheDocument()
   })
 
   it('renders viewer navigation without settings', () => {

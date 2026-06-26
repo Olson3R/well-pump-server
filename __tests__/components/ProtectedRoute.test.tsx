@@ -1,12 +1,13 @@
 import { render, screen } from '@testing-library/react'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 
-// Mock next/navigation
+// Mock next/navigation. The real `useRouter` returns a STABLE reference across
+// renders; return a single object here so an effect depending on `router` does
+// not spuriously re-run on re-render.
 const mockPush = jest.fn()
+const mockRouter = { push: mockPush }
 jest.mock('next/navigation', () => ({
-  useRouter: () => ({
-    push: mockPush,
-  }),
+  useRouter: () => mockRouter,
 }))
 
 // Mock next-auth

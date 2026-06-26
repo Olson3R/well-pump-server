@@ -2,7 +2,9 @@
 
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { Navigation } from '@/components/Navigation'
-import { useState, useEffect } from 'react'
+import { LastUpdated } from '@/components/LastUpdated'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
+import { useState, useEffect, useCallback } from 'react'
 import {
   LineChart,
   Line,
@@ -18,6 +20,7 @@ import {
 import { format } from 'date-fns'
 import {
   ArrowDownTrayIcon,
+  ArrowPathIcon,
   ChartBarIcon,
   TableCellsIcon
 } from '@heroicons/react/24/outline'
@@ -36,92 +39,268 @@ interface SensorData {
   dutyCycle2: number
 }
 
+interface Pagination {
+  total: number
+  limit?: number
+  offset: number
+  returned: number
+  hasMore: boolean
+}
+
+interface Aggregation {
+  interval: 'hour' | '6hour' | 'day'
+  auto: boolean
+  startDate: string
+  endDate: string
+}
+
+interface SensorResponse {
+  data?: SensorData[]
+  pagination?: Pagination
+  aggregation?: Aggregation
+}
+
+/**
+ * Summary of what the most recent fetch actually loaded — surfaced in the UI so
+ * the user can confirm the charts/tables cover the entire requested window.
+ */
+interface LoadMeta {
+  points: number
+  aggregation: Aggregation | null
+  pages: number
+  truncated: boolean
+}
+
+/**
+ * Page size used when paging raw rows. Mirrors the backend's MAX_RAW_ROWS so a
+ * single page pulls the largest un-aggregated batch the server will return.
+ */
+const RAW_PAGE_SIZE = 5000
+
+/**
+ * Hard safety stop for the "load all in range" loop so a runaway/looping
+ * pagination response can never spin forever. RAW_PAGE_SIZE * MAX_PAGES rows is
+ * far more than any realistic selected window.
+ */
+const MAX_PAGES = 100
+
+const AGGREGATE_LABEL: Record<Aggregation['interval'], string> = {
+  hour: 'hourly average',
+  '6hour': '6-hour average',
+  day: 'daily average',
+}
+
+/** One minute — the shared auto-refresh cadence for the live data screens. */
+const AUTO_REFRESH_MS = 60_000
+
+/**
+ * Translate the active selection into an absolute [start, end] window plus an
+ * optional aggregation hint. Pure (no component state) so it can be reused by
+ * both the manual and the auto-refresh paths and unit-tested in isolation.
+ *
+ * Both custom bounds are derived in the SAME (local) zone: parsing a bare
+ * 'YYYY-MM-DD' yields UTC midnight, which—paired with a local end-of-day—
+ * previously dropped the final selected day in non-UTC zones. Explicit
+ * local-time components keep the full range intact.
+ */
+function resolveWindow(
+  timeRange: string,
+  customStart?: string,
+  customEnd?: string
+): { startDate: Date; endDate: Date; aggregate: string } {
+  let startDate: Date
+  let endDate: Date
+  let aggregate = ''
+
+  if (timeRange === 'custom' && customStart && customEnd) {
+    startDate = new Date(`${customStart}T00:00:00`)
+    endDate = new Date(`${customEnd}T23:59:59.999`)
+
+    const spanDays =
+      (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)
+    if (spanDays > 7) {
+      aggregate = '6hour' // > 7 days: aggregate by 6 hours
+    } else if (spanDays > 1) {
+      aggregate = 'hour' // > 1 day: aggregate by hour
+    }
+    // <= 1 day: no aggregation (raw data)
+  } else {
+    endDate = new Date()
+    startDate = new Date()
+
+    switch (timeRange) {
+      case '1h':
+        startDate.setHours(startDate.getHours() - 1)
+        break
+      case '24h':
+        startDate.setDate(startDate.getDate() - 1)
+        break
+      case '7d':
+        startDate.setDate(startDate.getDate() - 7)
+        aggregate = 'hour'
+        break
+      case '30d':
+        startDate.setDate(startDate.getDate() - 30)
+        aggregate = '6hour'
+        break
+    }
+  }
+
+  return { startDate, endDate, aggregate }
+}
+
 export default function DataPage() {
   const [data, setData] = useState<SensorData[]>([])
   const [view, setView] = useState<'table' | 'chart'>('chart')
   const [timeRange, setTimeRange] = useState('24h')
-  const [loading, setLoading] = useState(true)
   const [customStartDate, setCustomStartDate] = useState('')
   const [customEndDate, setCustomEndDate] = useState('')
   const [dateRangeSpan, setDateRangeSpan] = useState(1) // days
+  const [loadMeta, setLoadMeta] = useState<LoadMeta | null>(null)
+  // A custom range is only auto-refreshed AFTER the user explicitly loads it
+  // (clicks "Load Data"); editing the dates again disarms it until re-loaded.
+  // This keeps the poll from firing against a window the user is still picking.
+  const [customLoaded, setCustomLoaded] = useState(false)
 
+  // Whether the current selection is queryable. Preset ranges always are; a
+  // custom range only once it's been explicitly loaded.
+  const canQuery = timeRange !== 'custom' || customLoaded
+
+  /**
+   * Load the ENTIRE active window and replace the dataset. Reads the current
+   * selection (range / custom bounds) on every invocation, so both auto-refresh
+   * and manual refresh keep the user's selected range intact.
+   *
+   * The backend returns either every row in the window, a transparently
+   * downsampled series, or—for the rare capped case—a raw page that signals
+   * `hasMore`. We follow `hasMore` with offset paging until the whole window has
+   * been pulled, so charts/tables always reflect the full range. Most requests
+   * resolve in a single page (hasMore=false). The {@link AbortSignal} cancels
+   * in-flight pages on unmount or when a newer refresh supersedes this one.
+   */
+  const loadWindow = useCallback(
+    async (signal: AbortSignal) => {
+      // Custom range without both bounds: nothing to query. Leave the existing
+      // data/coverage intact and don't record a (mis)load.
+      if (timeRange === 'custom' && !(customStartDate && customEndDate)) {
+        return
+      }
+
+      const { startDate, endDate, aggregate } = resolveWindow(
+        timeRange,
+        customStartDate,
+        customEndDate
+      )
+
+      // Record span (drives x-axis label formatting).
+      const spanDays =
+        (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)
+      setDateRangeSpan(spanDays)
+
+      const baseUrl =
+        `/api/sensors?startDate=${encodeURIComponent(startDate.toISOString())}` +
+        `&endDate=${encodeURIComponent(endDate.toISOString())}` +
+        (aggregate ? `&aggregate=${aggregate}` : '')
+
+      // --- Load the ENTIRE selected window -------------------------------------
+      const collected: SensorData[] = []
+      let aggregation: Aggregation | null = null
+      let offset = 0
+      let pages = 0
+      let truncated = false
+
+      while (pages < MAX_PAGES) {
+        // Page 0 is unbounded (lets the server choose raw-vs-downsample).
+        // Subsequent pages request an explicit raw page at the running offset.
+        const url =
+          pages === 0
+            ? baseUrl
+            : `${baseUrl}&limit=${RAW_PAGE_SIZE}&offset=${offset}`
+
+        const response = await fetch(url, { signal })
+        if (!response.ok) {
+          throw new Error(`Request failed with status ${response.status}`)
+        }
+        const result: SensorResponse = await response.json()
+        pages += 1
+
+        if (Array.isArray(result.data)) {
+          collected.push(...result.data)
+        }
+        if (result.aggregation) {
+          aggregation = result.aggregation
+        }
+
+        const p = result.pagination
+        if (!p || !p.hasMore) break
+
+        // Advance past everything seen so far. Prefer the server's own counters
+        // and fall back to what we received to avoid an infinite loop.
+        const returned = p.returned ?? result.data?.length ?? 0
+        if (returned === 0) break // defensive: no progress => stop
+        offset = (p.offset ?? offset) + returned
+
+        if (pages >= MAX_PAGES) {
+          truncated = true
+        }
+      }
+
+      // A superseding refresh / unmount aborted us mid-flight — discard the
+      // partial result rather than clobbering newer state.
+      if (signal.aborted) return
+
+      // The API returns newest-first; charts/tables read oldest-first.
+      collected.reverse()
+      setData(collected)
+      setLoadMeta({
+        points: collected.length,
+        aggregation,
+        pages,
+        truncated,
+      })
+    },
+    [timeRange, customStartDate, customEndDate]
+  )
+
+  // Shared auto/manual refresh: polls every minute, pauses on a hidden tab, and
+  // exposes loading / lastUpdated / error plus a manual `refresh()` trigger.
+  // Mount + range-change fetches are driven by the effect below (so a custom
+  // range isn't queried until the user loads it); the hook owns only the
+  // interval poll + visibility behaviour, hence `immediate: false`.
+  const { loading, lastUpdated, error, isPaused, refresh } = useAutoRefresh(
+    loadWindow,
+    {
+      intervalMs: AUTO_REFRESH_MS,
+      immediate: false,
+      enabled: canQuery,
+    }
+  )
+
+  // Fetch on mount and whenever a non-custom range is selected. Switching range
+  // also disarms any previously-loaded custom window. A custom range waits for
+  // an explicit "Load Data" so we never query a half-entered window.
   useEffect(() => {
+    setCustomLoaded(false)
     if (timeRange !== 'custom') {
-      fetchData()
+      void refresh()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeRange])
 
-  const fetchData = async (customStart?: string, customEnd?: string) => {
-    setLoading(true)
-    try {
-      let startDate: Date
-      let endDate: Date
-      let aggregate = ''
+  // Editing either custom bound disarms auto-refresh until the user re-loads,
+  // so the poll can't fire against a window that's mid-edit.
+  useEffect(() => {
+    setCustomLoaded(false)
+  }, [customStartDate, customEndDate])
 
-      if (timeRange === 'custom' && customStart && customEnd) {
-        startDate = new Date(customStart)
-        endDate = new Date(customEnd)
-        // Set end date to end of day
-        endDate.setHours(23, 59, 59, 999)
-      } else {
-        endDate = new Date()
-        startDate = new Date()
-
-        switch (timeRange) {
-          case '1h':
-            startDate.setHours(startDate.getHours() - 1)
-            break
-          case '24h':
-            startDate.setDate(startDate.getDate() - 1)
-            break
-          case '7d':
-            startDate.setDate(startDate.getDate() - 7)
-            aggregate = 'hour'
-            break
-          case '30d':
-            startDate.setDate(startDate.getDate() - 30)
-            aggregate = '6hour'
-            break
-        }
-      }
-
-      // Calculate span in days for custom ranges
-      const spanMs = endDate.getTime() - startDate.getTime()
-      const spanDays = spanMs / (1000 * 60 * 60 * 24)
-      setDateRangeSpan(spanDays)
-
-      // Smart aggregation for custom date ranges
-      if (timeRange === 'custom') {
-        if (spanDays > 7) {
-          aggregate = '6hour' // > 7 days: aggregate by 6 hours
-        } else if (spanDays > 1) {
-          aggregate = 'hour' // > 1 day: aggregate by hour
-        }
-        // <= 1 day: no aggregation (raw data)
-      }
-
-      let url = `/api/sensors?startDate=${startDate.toISOString()}&endDate=${endDate.toISOString()}`
-      if (aggregate) {
-        url += `&aggregate=${aggregate}`
-      }
-
-      const response = await fetch(url)
-      const result = await response.json()
-
-      if (result.data) {
-        setData(result.data.reverse()) // Reverse to show oldest first for charts
-      }
-    } catch (error) {
-      console.error('Error fetching data:', error)
-    } finally {
-      setLoading(false)
-    }
+  const handleRefresh = () => {
+    void refresh()
   }
 
   const handleCustomDateFetch = () => {
     if (customStartDate && customEndDate) {
-      fetchData(customStartDate, customEndDate)
+      setCustomLoaded(true)
+      void refresh()
     }
   }
 
@@ -177,7 +356,22 @@ export default function DataPage() {
                 Sensor Data
               </h2>
             </div>
-            <div className="mt-4 flex md:mt-0 md:ml-4 space-x-2">
+            <div className="mt-4 flex flex-wrap items-center gap-2 md:mt-0 md:ml-4">
+              <LastUpdated
+                date={lastUpdated}
+                loading={loading}
+                isPaused={isPaused}
+                className="mr-2"
+              />
+              <button
+                onClick={handleRefresh}
+                disabled={loading}
+                className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                aria-label="Refresh data"
+              >
+                <ArrowPathIcon className={`h-5 w-5 mr-2 ${loading ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
               <button
                 onClick={() => exportData('csv')}
                 className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
@@ -275,8 +469,46 @@ export default function DataPage() {
             </div>
           </div>
 
-          {loading ? (
-            <div className="flex justify-center py-12">
+          {/* Error banner — shown once a refresh actually fails. Auto-refresh
+              keeps retrying on its interval, so the data isn't stuck. */}
+          {error && (
+            <div
+              role="alert"
+              className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-4 mb-6"
+            >
+              Failed to load sensor data. Please try again.
+            </div>
+          )}
+
+          {/* Coverage summary — confirms the charts/tables reflect the full window */}
+          {!loading && !error && loadMeta && (
+            <div className="text-sm text-gray-600 mb-4" data-testid="coverage-summary">
+              {loadMeta.points > 0 ? (
+                <>
+                  Showing{' '}
+                  <span className="font-medium text-gray-900">
+                    {loadMeta.points.toLocaleString()}
+                  </span>{' '}
+                  data point{loadMeta.points === 1 ? '' : 's'}
+                  {loadMeta.aggregation && (
+                    <> · {AGGREGATE_LABEL[loadMeta.aggregation.interval]}</>
+                  )}
+                  {loadMeta.pages > 1 && <> · {loadMeta.pages} pages</>}
+                  {loadMeta.truncated && (
+                    <span className="text-amber-600">
+                      {' '}
+                      · range truncated (too many points)
+                    </span>
+                  )}
+                </>
+              ) : (
+                <>No data in the selected range.</>
+              )}
+            </div>
+          )}
+
+          {loading || (!loadMeta && !error) ? (
+            <div className="flex justify-center py-12" role="status" aria-label="Loading">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
             </div>
           ) : view === 'chart' ? (

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { EventType } from '@prisma/client'
 import { getAuthContext, hasPermission } from '@/lib/auth-middleware'
+import { dispatchEventNotifications } from '@/lib/notifications'
 
 export async function POST(request: NextRequest) {
   try {
@@ -99,6 +100,23 @@ export async function POST(request: NextRequest) {
             description: data.description
           }
         })
+
+        // A brand-new active alert condition has been detected — this is the
+        // moment notifications must fire. Dispatch is awaited (so it completes
+        // before the serverless function is frozen) but guarded so a delivery
+        // failure can never break event ingestion.
+        try {
+          await dispatchEventNotifications({
+            type: eventType,
+            device: data.device,
+            location: data.location,
+            value: data.value,
+            threshold: data.threshold,
+            description: data.description,
+          })
+        } catch (notifyError) {
+          console.error('Error dispatching event notifications:', notifyError)
+        }
 
         return NextResponse.json(
           {

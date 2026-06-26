@@ -29,6 +29,11 @@ import {
 
 export type SummaryReportPeriod = 'day' | 'week'
 
+/** Display unit for the temperature line in the rendered body. */
+export type TemperatureUnit = 'C' | 'F'
+
+const DEFAULT_TEMPERATURE_UNIT: TemperatureUnit = 'F'
+
 export interface SummaryReportPayload {
   period: SummaryReportPeriod
   /** Inclusive lower bound (UTC) of the summarised window. */
@@ -73,8 +78,13 @@ const WEEKLY_SEND_WEEKDAY = 1
 export async function buildSummaryReport(
   period: SummaryReportPeriod,
   now: Date = new Date(),
-  thresholds: StatsThresholds = DEFAULT_STATS_THRESHOLDS,
+  options: {
+    thresholds?: StatsThresholds
+    temperatureUnit?: TemperatureUnit
+  } = {},
 ): Promise<SummaryReportPayload> {
+  const thresholds = options.thresholds ?? DEFAULT_STATS_THRESHOLDS
+  const temperatureUnit = options.temperatureUnit ?? DEFAULT_TEMPERATURE_UNIT
   const end = now
   const start = new Date(
     end.getTime() - (period === 'week' ? 7 * MS_PER_DAY : MS_PER_DAY),
@@ -100,7 +110,7 @@ export async function buildSummaryReport(
   const { tempMinC, tempMaxC } = aggregateTemperatures(rows)
 
   const title = period === 'week' ? 'Weekly well-pump summary' : 'Daily well-pump summary'
-  const body = formatSummaryBody(period, stats, activeAlerts, tempMinC, tempMaxC)
+  const body = formatSummaryBody(period, stats, activeAlerts, tempMinC, tempMaxC, temperatureUnit)
 
   return { period, start, end, stats, activeAlerts, tempMinC, tempMaxC, title, body }
 }
@@ -151,7 +161,8 @@ export async function sendSummaryReportFor(
     return { userId, period, delivered: false, skippedReason: 'no Pushover credentials' }
   }
 
-  const report = await buildSummaryReport(period, options.now)
+  const temperatureUnit = toTemperatureUnit(settings.summaryReportTemperatureUnit)
+  const report = await buildSummaryReport(period, options.now, { temperatureUnit })
   const result = await sendPushover(
     credentials,
     {
@@ -227,6 +238,7 @@ function formatSummaryBody(
   activeAlerts: number,
   tempMinC: number | null,
   tempMaxC: number | null,
+  temperatureUnit: TemperatureUnit,
 ): string {
   const range = period === 'week' ? 'Last 7 days' : 'Last 24 hours'
   const avgRunStr =
@@ -246,14 +258,25 @@ function formatSummaryBody(
   // Drop the temperature line entirely when the window had no readings rather
   // than printing a confusing "n/a" alongside real numbers.
   if (tempMinC !== null && tempMaxC !== null) {
-    lines.push(`• Temperature: ${formatTemp(tempMinC)} – ${formatTemp(tempMaxC)}`)
+    lines.push(
+      `• Temperature: ${formatTemp(tempMinC, temperatureUnit)} – ${formatTemp(tempMaxC, temperatureUnit)}`,
+    )
   }
   lines.push(`• Active alerts: ${activeAlerts}`)
   return lines.join('\n')
 }
 
-function formatTemp(celsius: number): string {
-  return `${celsius.toFixed(1)}°C`
+/**
+ * Convert a Celsius reading into the user's chosen display unit and format it
+ * with one decimal place. Sensor data is stored in C, so 'C' is pass-through.
+ */
+function formatTemp(celsius: number, unit: TemperatureUnit): string {
+  if (unit === 'C') return `${celsius.toFixed(1)}°C`
+  return `${(celsius * 9 / 5 + 32).toFixed(1)}°F`
+}
+
+export function toTemperatureUnit(raw: unknown): TemperatureUnit {
+  return raw === 'C' ? 'C' : 'F'
 }
 
 function formatDuration(seconds: number): string {

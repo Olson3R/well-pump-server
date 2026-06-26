@@ -115,7 +115,8 @@ describe('buildSummaryReport', () => {
     expect(report.body).toContain('Last 24 hours')
     expect(report.body).toContain('Pump runs: 1')
     expect(report.body).toContain('Pump runtime: 1m')
-    expect(report.body).toContain('Temperature: 18.4°C – 19.1°C')
+    // Default unit is Fahrenheit: 18.4°C = 65.1°F, 19.1°C = 66.4°F.
+    expect(report.body).toContain('Temperature: 65.1°F – 66.4°F')
     expect(report.body).toContain('Active alerts: 2')
 
     // Window bounds passed to Prisma match what we just asserted.
@@ -169,11 +170,33 @@ describe('buildSummaryReport', () => {
       },
     ])
 
-    const report = await buildSummaryReport('day')
+    // Use Celsius here so we assert on the raw aggregation, independent of unit math.
+    const report = await buildSummaryReport('day', undefined, { temperatureUnit: 'C' })
 
     expect(report.tempMinC).toBe(9.8)
     expect(report.tempMaxC).toBe(22.7)
     expect(report.body).toContain('Temperature: 9.8°C – 22.7°C')
+  })
+
+  it('renders the temperature line in the requested unit', async () => {
+    mockPrisma.sensorData.findMany.mockResolvedValue([
+      {
+        timestamp: new Date('2026-06-26T01:00:00Z'),
+        startTime: new Date('2026-06-26T00:59:00Z'),
+        endTime: new Date('2026-06-26T01:00:00Z'),
+        dutyCycle1: 0,
+        pressMin: 50,
+        tempMin: 0,   // 32°F
+        tempMax: 100, // 212°F
+        device: 'd',
+      },
+    ])
+
+    const fahrenheit = await buildSummaryReport('day', undefined, { temperatureUnit: 'F' })
+    expect(fahrenheit.body).toContain('Temperature: 32.0°F – 212.0°F')
+
+    const celsius = await buildSummaryReport('day', undefined, { temperatureUnit: 'C' })
+    expect(celsius.body).toContain('Temperature: 0.0°C – 100.0°C')
   })
 
   it('omits the temperature line when the window had no readings', async () => {

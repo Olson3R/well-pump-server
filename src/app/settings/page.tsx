@@ -33,6 +33,7 @@ interface NotificationSettings {
   summaryReportHourLocal: number
   summaryReportPeriod: 'day' | 'week'
   summaryReportTimezone: string
+  summaryReportTemperatureUnit: 'C' | 'F'
 }
 
 interface CleanupLog {
@@ -390,7 +391,7 @@ export default function SettingsPage() {
                       Enable scheduled summary report
                     </label>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Period</label>
                       <select
@@ -431,6 +432,20 @@ export default function SettingsPage() {
                         placeholder="America/New_York"
                         className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                       />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Temperature unit</label>
+                      <select
+                        value={notificationSettings.summaryReportTemperatureUnit}
+                        onChange={(e) => setNotificationSettings({
+                          ...notificationSettings,
+                          summaryReportTemperatureUnit: e.target.value as 'C' | 'F'
+                        })}
+                        className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                      >
+                        <option value="F">Fahrenheit (°F)</option>
+                        <option value="C">Celsius (°C)</option>
+                      </select>
                     </div>
                   </div>
                   <div>

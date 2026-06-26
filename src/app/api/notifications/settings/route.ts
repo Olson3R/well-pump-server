@@ -85,6 +85,16 @@ export async function PUT(request: NextRequest) {
         { status: 400 },
       )
     }
+    if (
+      'summaryReportTemperatureUnit' in data &&
+      data.summaryReportTemperatureUnit !== 'C' &&
+      data.summaryReportTemperatureUnit !== 'F'
+    ) {
+      return NextResponse.json(
+        { error: "summaryReportTemperatureUnit must be 'C' or 'F'" },
+        { status: 400 },
+      )
+    }
 
     const settings = await prisma.notificationSettings.upsert({
       where: { userId: (session as { user: { id: string } }).user.id },

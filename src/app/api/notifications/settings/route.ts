@@ -86,12 +86,12 @@ export async function PUT(request: NextRequest) {
       )
     }
     if (
-      'summaryReportTemperatureUnit' in data &&
-      data.summaryReportTemperatureUnit !== 'C' &&
-      data.summaryReportTemperatureUnit !== 'F'
+      'temperatureUnit' in data &&
+      data.temperatureUnit !== 'C' &&
+      data.temperatureUnit !== 'F'
     ) {
       return NextResponse.json(
-        { error: "summaryReportTemperatureUnit must be 'C' or 'F'" },
+        { error: "temperatureUnit must be 'C' or 'F'" },
         { status: 400 },
       )
     }

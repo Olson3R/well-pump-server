@@ -55,12 +55,15 @@ model NotificationSettings {
   // in `summaryReportTimezone`; for the "week" period it only fires on Monday.
   // `summaryReportLastSentAt` is a per-hour idempotency guard so the hourly cron
   // never sends twice in the same target window.
-  summaryReportEnabled        Boolean   @default(false)
-  summaryReportHourLocal      Int       @default(8)
-  summaryReportPeriod         String    @default("day")
-  summaryReportTimezone       String    @default("UTC")
-  summaryReportTemperatureUnit String   @default("F")
-  summaryReportLastSentAt     DateTime?
+  summaryReportEnabled    Boolean   @default(false)
+  summaryReportHourLocal  Int       @default(8)
+  summaryReportPeriod     String    @default("day")
+  summaryReportTimezone   String    @default("UTC")
+  summaryReportLastSentAt DateTime?
+
+  // UI-wide temperature display unit. The ESP32 stores readings in Fahrenheit
+  // so 'F' is pass-through and 'C' converts on display.
+  temperatureUnit         String    @default("F")
 
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

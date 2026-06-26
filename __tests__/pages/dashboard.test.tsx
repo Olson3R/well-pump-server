@@ -90,7 +90,10 @@ describe('Dashboard Page', () => {
     render(<Dashboard />)
 
     await waitFor(() => {
-      expect(screen.getByText('20.5°C')).toBeInTheDocument()
+      // Default temperature unit is Fahrenheit; sensor stores Fahrenheit so
+      // 20.5 is a pass-through (the value is unrealistic but the test only
+      // cares about the rendering path).
+      expect(screen.getByText('20.5°F')).toBeInTheDocument()
     })
     expect(screen.getByText('40.20 psi')).toBeInTheDocument()
     expect(screen.getByText('2.30 A')).toBeInTheDocument()

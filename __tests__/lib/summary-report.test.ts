@@ -87,15 +87,15 @@ describe('buildSummaryReport', () => {
   it('queries the last 24h for a daily report and formats the body', async () => {
     const now = new Date('2026-06-26T08:00:00Z')
     mockPrisma.sensorData.findMany.mockResolvedValue([
-      // One pump-on minute => 1 run, 60s runtime
+      // One pump-on minute => 1 run, 60s runtime. Sensor temps are Fahrenheit.
       {
         timestamp: new Date('2026-06-26T07:00:00Z'),
         startTime: new Date('2026-06-26T06:59:00Z'),
         endTime: new Date('2026-06-26T07:00:00Z'),
         dutyCycle1: 100,
         pressMin: 45,
-        tempMin: 18.4,
-        tempMax: 19.1,
+        tempMin: 62.4,
+        tempMax: 65.1,
         device: 'well-pump-monitor',
       },
     ])
@@ -109,14 +109,14 @@ describe('buildSummaryReport', () => {
     expect(report.stats.pumpRunCount).toBe(1)
     expect(report.stats.pumpDurationSeconds).toBe(60)
     expect(report.activeAlerts).toBe(2)
-    expect(report.tempMinC).toBe(18.4)
-    expect(report.tempMaxC).toBe(19.1)
+    expect(report.tempMinF).toBe(62.4)
+    expect(report.tempMaxF).toBe(65.1)
     expect(report.title).toMatch(/daily/i)
     expect(report.body).toContain('Last 24 hours')
     expect(report.body).toContain('Pump runs: 1')
     expect(report.body).toContain('Pump runtime: 1m')
-    // Default unit is Fahrenheit: 18.4°C = 65.1°F, 19.1°C = 66.4°F.
-    expect(report.body).toContain('Temperature: 65.1°F – 66.4°F')
+    // Default unit is Fahrenheit (pass-through for sensor data).
+    expect(report.body).toContain('Temperature: 62.4°F – 65.1°F')
     expect(report.body).toContain('Active alerts: 2')
 
     // Window bounds passed to Prisma match what we just asserted.
@@ -144,8 +144,8 @@ describe('buildSummaryReport', () => {
         endTime: new Date('2026-06-26T01:00:00Z'),
         dutyCycle1: 0,
         pressMin: 50,
-        tempMin: 12.1,
-        tempMax: 14.5,
+        tempMin: 56.0,
+        tempMax: 60.0,
         device: 'd',
       },
       {
@@ -154,8 +154,8 @@ describe('buildSummaryReport', () => {
         endTime: new Date('2026-06-26T02:00:00Z'),
         dutyCycle1: 0,
         pressMin: 50,
-        tempMin: 9.8, // coldest
-        tempMax: 13.0,
+        tempMin: 49.6, // coldest
+        tempMax: 58.3,
         device: 'd',
       },
       {
@@ -164,18 +164,18 @@ describe('buildSummaryReport', () => {
         endTime: new Date('2026-06-26T03:00:00Z'),
         dutyCycle1: 0,
         pressMin: 50,
-        tempMin: 11.0,
-        tempMax: 22.7, // hottest
+        tempMin: 52.1,
+        tempMax: 71.4, // hottest
         device: 'd',
       },
     ])
 
-    // Use Celsius here so we assert on the raw aggregation, independent of unit math.
-    const report = await buildSummaryReport('day', undefined, { temperatureUnit: 'C' })
+    // Fahrenheit is pass-through so we can assert raw aggregation directly.
+    const report = await buildSummaryReport('day', undefined, { temperatureUnit: 'F' })
 
-    expect(report.tempMinC).toBe(9.8)
-    expect(report.tempMaxC).toBe(22.7)
-    expect(report.body).toContain('Temperature: 9.8°C – 22.7°C')
+    expect(report.tempMinF).toBe(49.6)
+    expect(report.tempMaxF).toBe(71.4)
+    expect(report.body).toContain('Temperature: 49.6°F – 71.4°F')
   })
 
   it('renders the temperature line in the requested unit', async () => {
@@ -186,8 +186,8 @@ describe('buildSummaryReport', () => {
         endTime: new Date('2026-06-26T01:00:00Z'),
         dutyCycle1: 0,
         pressMin: 50,
-        tempMin: 0,   // 32°F
-        tempMax: 100, // 212°F
+        tempMin: 32,  // 0°C
+        tempMax: 212, // 100°C
         device: 'd',
       },
     ])
@@ -204,8 +204,8 @@ describe('buildSummaryReport', () => {
 
     const report = await buildSummaryReport('day')
 
-    expect(report.tempMinC).toBeNull()
-    expect(report.tempMaxC).toBeNull()
+    expect(report.tempMinF).toBeNull()
+    expect(report.tempMaxF).toBeNull()
     expect(report.body).not.toContain('Temperature')
   })
 })

@@ -4,6 +4,8 @@ import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { Navigation } from '@/components/Navigation'
 import { LastUpdated } from '@/components/LastUpdated'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
+import { useTemperatureUnit } from '@/hooks/useTemperatureUnit'
+import { convertTemperature, temperatureUnitSuffix } from '@/lib/temperature'
 import { useState, useEffect, useCallback } from 'react'
 import {
   LineChart,
@@ -166,6 +168,8 @@ function resolveWindow(
 }
 
 export default function DataPage() {
+  const temperatureUnit = useTemperatureUnit()
+  const tempUnitSuffix = temperatureUnitSuffix(temperatureUnit)
   const [data, setData] = useState<SensorData[]>([])
   const [view, setView] = useState<'table' | 'chart'>('chart')
   const [timeRange, setTimeRange] = useState('24h')
@@ -417,9 +421,12 @@ export default function DataPage() {
     dateRangeSpan > 7 ? 'MMM d' : dateRangeSpan > 1 ? 'EEE HH:mm' : 'HH:mm'
   const formatTick = (ts: number) => format(new Date(ts), dateFormat)
 
+  // Sensor values arrive in Fahrenheit; convert per the user's display unit so
+  // the chart Y-axis, tooltip, and table cells all show the same number.
   const chartData = data.map(d => ({
     ...d,
     timestamp: new Date(d.timestamp).getTime(),
+    tempAvg: convertTemperature(d.tempAvg, temperatureUnit),
   }))
 
   return (
@@ -653,7 +660,7 @@ export default function DataPage() {
                       type="monotone"
                       dataKey="tempAvg"
                       stroke="#ef4444"
-                      name="Temperature (°C)"
+                      name={`Temperature (${tempUnitSuffix})`}
                       strokeWidth={2}
                       dot={false}
                       isAnimationActive={false}
@@ -793,7 +800,7 @@ export default function DataPage() {
                         Timestamp
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Temp (°C)
+                        Temp ({tempUnitSuffix})
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Humidity (%)
@@ -822,7 +829,7 @@ export default function DataPage() {
                           {format(new Date(row.timestamp), 'yyyy-MM-dd HH:mm:ss')}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {row.tempAvg.toFixed(1)}
+                          {convertTemperature(row.tempAvg, temperatureUnit).toFixed(1)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {row.humAvg.toFixed(1)}

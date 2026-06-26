@@ -26,13 +26,14 @@ import {
   type ChannelResult,
   type PushoverCredentials,
 } from '@/lib/notifications'
+import {
+  DEFAULT_TEMPERATURE_UNIT,
+  formatTemperature,
+  toTemperatureUnit,
+  type TemperatureUnit,
+} from '@/lib/temperature'
 
 export type SummaryReportPeriod = 'day' | 'week'
-
-/** Display unit for the temperature line in the rendered body. */
-export type TemperatureUnit = 'C' | 'F'
-
-const DEFAULT_TEMPERATURE_UNIT: TemperatureUnit = 'F'
 
 export interface SummaryReportPayload {
   period: SummaryReportPeriod
@@ -43,12 +44,14 @@ export interface SummaryReportPayload {
   stats: AggregatedStats
   activeAlerts: number
   /**
-   * Coldest / hottest temperature observed across all rows in the window.
-   * Both `null` when the window contained no data — the body line is then
-   * suppressed so we don't show "n/a".
+   * Coldest / hottest temperature observed across all rows in the window, in
+   * Fahrenheit. (The ESP32 stores readings in Fahrenheit despite the README
+   * example showing Celsius — values arrive ~60°F at the pump house, not 60°C
+   * which would be unsurvivable.) Both `null` when the window contained no
+   * data — the body line is then suppressed so we don't show "n/a".
    */
-  tempMinC: number | null
-  tempMaxC: number | null
+  tempMinF: number | null
+  tempMaxF: number | null
   /** Title and body as they'll appear in the Pushover notification. */
   title: string
   body: string
@@ -107,22 +110,24 @@ export async function buildSummaryReport(
 
   const stats = computeStatsFromRows(rows, thresholds)
   const activeAlerts = await prisma.event.count({ where: { active: true } })
-  const { tempMinC, tempMaxC } = aggregateTemperatures(rows)
+  const { tempMinF, tempMaxF } = aggregateTemperatures(rows)
 
   const title = period === 'week' ? 'Weekly well-pump summary' : 'Daily well-pump summary'
-  const body = formatSummaryBody(period, stats, activeAlerts, tempMinC, tempMaxC, temperatureUnit)
+  const body = formatSummaryBody(period, stats, activeAlerts, tempMinF, tempMaxF, temperatureUnit)
 
-  return { period, start, end, stats, activeAlerts, tempMinC, tempMaxC, title, body }
+  return { period, start, end, stats, activeAlerts, tempMinF, tempMaxF, title, body }
 }
 
 /**
  * Collapse per-row tempMin/tempMax into the coldest and hottest temperature
- * observed across the whole window. Filters out non-finite values so a single
- * dropped sensor reading can't poison the aggregate.
+ * observed across the whole window. Sensor values arrive in Fahrenheit (see
+ * lib/temperature.ts), so the aggregate is in Fahrenheit too. Non-finite per-
+ * row readings are skipped so a single dropped sensor sample can't poison
+ * the aggregate.
  */
 function aggregateTemperatures(
   rows: ReadonlyArray<{ tempMin: number; tempMax: number }>,
-): { tempMinC: number | null; tempMaxC: number | null } {
+): { tempMinF: number | null; tempMaxF: number | null } {
   let lo = Number.POSITIVE_INFINITY
   let hi = Number.NEGATIVE_INFINITY
   for (const row of rows) {
@@ -130,8 +135,8 @@ function aggregateTemperatures(
     if (Number.isFinite(row.tempMax) && row.tempMax > hi) hi = row.tempMax
   }
   return {
-    tempMinC: Number.isFinite(lo) ? lo : null,
-    tempMaxC: Number.isFinite(hi) ? hi : null,
+    tempMinF: Number.isFinite(lo) ? lo : null,
+    tempMaxF: Number.isFinite(hi) ? hi : null,
   }
 }
 
@@ -161,7 +166,7 @@ export async function sendSummaryReportFor(
     return { userId, period, delivered: false, skippedReason: 'no Pushover credentials' }
   }
 
-  const temperatureUnit = toTemperatureUnit(settings.summaryReportTemperatureUnit)
+  const temperatureUnit = toTemperatureUnit(settings.temperatureUnit)
   const report = await buildSummaryReport(period, options.now, { temperatureUnit })
   const result = await sendPushover(
     credentials,
@@ -236,8 +241,8 @@ function formatSummaryBody(
   period: SummaryReportPeriod,
   stats: AggregatedStats,
   activeAlerts: number,
-  tempMinC: number | null,
-  tempMaxC: number | null,
+  tempMinF: number | null,
+  tempMaxF: number | null,
   temperatureUnit: TemperatureUnit,
 ): string {
   const range = period === 'week' ? 'Last 7 days' : 'Last 24 hours'
@@ -257,26 +262,13 @@ function formatSummaryBody(
   ]
   // Drop the temperature line entirely when the window had no readings rather
   // than printing a confusing "n/a" alongside real numbers.
-  if (tempMinC !== null && tempMaxC !== null) {
+  if (tempMinF !== null && tempMaxF !== null) {
     lines.push(
-      `• Temperature: ${formatTemp(tempMinC, temperatureUnit)} – ${formatTemp(tempMaxC, temperatureUnit)}`,
+      `• Temperature: ${formatTemperature(tempMinF, temperatureUnit)} – ${formatTemperature(tempMaxF, temperatureUnit)}`,
     )
   }
   lines.push(`• Active alerts: ${activeAlerts}`)
   return lines.join('\n')
-}
-
-/**
- * Convert a Celsius reading into the user's chosen display unit and format it
- * with one decimal place. Sensor data is stored in C, so 'C' is pass-through.
- */
-function formatTemp(celsius: number, unit: TemperatureUnit): string {
-  if (unit === 'C') return `${celsius.toFixed(1)}°C`
-  return `${(celsius * 9 / 5 + 32).toFixed(1)}°F`
-}
-
-export function toTemperatureUnit(raw: unknown): TemperatureUnit {
-  return raw === 'C' ? 'C' : 'F'
 }
 
 function formatDuration(seconds: number): string {

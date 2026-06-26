@@ -5,6 +5,8 @@ import { Navigation } from '@/components/Navigation'
 import { LastUpdated } from '@/components/LastUpdated'
 import { StatsSummary } from '@/components/StatsSummary'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
+import { useTemperatureUnit } from '@/hooks/useTemperatureUnit'
+import { formatTemperature } from '@/lib/temperature'
 import { useCallback, useState } from 'react'
 import {
   ExclamationTriangleIcon,
@@ -38,6 +40,7 @@ export default function Dashboard() {
   const [latestData, setLatestData] = useState<SensorData | null>(null)
   const [activeEvents, setActiveEvents] = useState<Event[]>([])
   const [systemStatus, setSystemStatus] = useState<'healthy' | 'warning' | 'error'>('healthy')
+  const temperatureUnit = useTemperatureUnit()
 
   /**
    * Single refresh pass for the whole dashboard: pull the latest reading and
@@ -259,7 +262,7 @@ export default function Dashboard() {
                     <div className="border rounded-lg p-3">
                       <div className="text-sm font-medium text-gray-500">Temperature</div>
                       <div className="text-2xl font-bold text-gray-900">
-                        {latestData.tempAvg.toFixed(1)}°C
+                        {formatTemperature(latestData.tempAvg, temperatureUnit)}
                       </div>
                     </div>
                     <div className="border rounded-lg p-3">

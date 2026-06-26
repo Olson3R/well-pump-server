@@ -5,6 +5,7 @@ import { Navigation } from '@/components/Navigation'
 import UserManagement from '@/components/UserManagement'
 import PasswordChange from '@/components/PasswordChange'
 import DeviceTokens from '@/components/DeviceTokens'
+import { setTemperatureUnit } from '@/hooks/useTemperatureUnit'
 import { useState, useEffect } from 'react'
 import { useSession } from 'next-auth/react'
 import {
@@ -33,7 +34,7 @@ interface NotificationSettings {
   summaryReportHourLocal: number
   summaryReportPeriod: 'day' | 'week'
   summaryReportTimezone: string
-  summaryReportTemperatureUnit: 'C' | 'F'
+  temperatureUnit: 'C' | 'F'
 }
 
 interface CleanupLog {
@@ -160,15 +161,21 @@ export default function SettingsPage() {
   const saveNotificationSettings = async () => {
     setSaving(true)
     setMessage(null)
-    
+
     try {
       const response = await fetch('/api/notifications/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(notificationSettings)
       })
-      
+
       if (response.ok) {
+        // Push the (possibly new) temperature unit into the shared cache so
+        // already-mounted dashboard/data-page components re-render with the
+        // chosen unit without a full reload.
+        if (notificationSettings) {
+          setTemperatureUnit(notificationSettings.temperatureUnit)
+        }
         setMessage({ type: 'success', text: 'Notification settings saved successfully' })
       } else {
         throw new Error('Failed to save settings')
@@ -288,6 +295,31 @@ export default function SettingsPage() {
                   Notification Settings
                 </h3>
                 
+                {/* Display preferences — applies app-wide (dashboard, data
+                    charts/table, and the Pushover summary report). */}
+                <div className="space-y-4 mb-6 pb-4 border-b border-gray-200">
+                  <h4 className="text-sm font-medium text-gray-900">Display</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Temperature unit</label>
+                      <select
+                        value={notificationSettings.temperatureUnit}
+                        onChange={(e) => setNotificationSettings({
+                          ...notificationSettings,
+                          temperatureUnit: e.target.value as 'C' | 'F'
+                        })}
+                        className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                      >
+                        <option value="F">Fahrenheit (°F)</option>
+                        <option value="C">Celsius (°C)</option>
+                      </select>
+                      <p className="mt-1 text-xs text-gray-500">
+                        Used everywhere temperatures appear: dashboard, data charts, summary report.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Push Notifications */}
                 <div className="space-y-4 mb-6">
                   <h4 className="text-sm font-medium text-gray-900">Push Notifications</h4>
@@ -391,7 +423,7 @@ export default function SettingsPage() {
                       Enable scheduled summary report
                     </label>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Period</label>
                       <select
@@ -432,20 +464,6 @@ export default function SettingsPage() {
                         placeholder="America/New_York"
                         className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                       />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">Temperature unit</label>
-                      <select
-                        value={notificationSettings.summaryReportTemperatureUnit}
-                        onChange={(e) => setNotificationSettings({
-                          ...notificationSettings,
-                          summaryReportTemperatureUnit: e.target.value as 'C' | 'F'
-                        })}
-                        className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                      >
-                        <option value="F">Fahrenheit (°F)</option>
-                        <option value="C">Celsius (°C)</option>
-                      </select>
                     </div>
                   </div>
                   <div>

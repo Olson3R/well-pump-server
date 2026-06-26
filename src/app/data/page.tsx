@@ -689,6 +689,51 @@ export default function DataPage() {
                 </ResponsiveContainer>
               </div>
 
+              {/* Pressure Chart */}
+              <div className="bg-white p-6 rounded-lg shadow select-none">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Pressure</h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart
+                    data={chartData}
+                    onMouseDown={handleChartMouseDown}
+                    onMouseMove={handleChartMouseMove}
+                    onMouseUp={handleChartMouseUp}
+                    onMouseLeave={handleChartMouseLeave}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis
+                      dataKey="timestamp"
+                      type="number"
+                      domain={['dataMin', 'dataMax']}
+                      scale="time"
+                      tickFormatter={formatTick}
+                      interval="preserveStartEnd"
+                    />
+                    <YAxis />
+                    <Tooltip labelFormatter={(ts) => format(new Date(Number(ts)), 'MMM d, HH:mm:ss')} />
+                    <Legend />
+                    <Line
+                      type="monotone"
+                      dataKey="pressAvg"
+                      stroke="#f59e0b"
+                      name="Pressure (psi)"
+                      strokeWidth={2}
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                    {dragStart != null && dragEnd != null && dragStart !== dragEnd && (
+                      <ReferenceArea
+                        x1={Math.min(dragStart, dragEnd)}
+                        x2={Math.max(dragStart, dragEnd)}
+                        strokeOpacity={0.3}
+                        fill="#3b82f6"
+                        fillOpacity={0.15}
+                      />
+                    )}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+
               {/* Current Chart */}
               <div className="bg-white p-6 rounded-lg shadow select-none">
                 <h3 className="text-lg font-medium text-gray-900 mb-4">Current Consumption</h3>
@@ -742,51 +787,6 @@ export default function DataPage() {
                       />
                     )}
                   </AreaChart>
-                </ResponsiveContainer>
-              </div>
-
-              {/* Pressure Chart */}
-              <div className="bg-white p-6 rounded-lg shadow select-none">
-                <h3 className="text-lg font-medium text-gray-900 mb-4">Pressure</h3>
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart
-                    data={chartData}
-                    onMouseDown={handleChartMouseDown}
-                    onMouseMove={handleChartMouseMove}
-                    onMouseUp={handleChartMouseUp}
-                    onMouseLeave={handleChartMouseLeave}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis
-                      dataKey="timestamp"
-                      type="number"
-                      domain={['dataMin', 'dataMax']}
-                      scale="time"
-                      tickFormatter={formatTick}
-                      interval="preserveStartEnd"
-                    />
-                    <YAxis />
-                    <Tooltip labelFormatter={(ts) => format(new Date(Number(ts)), 'MMM d, HH:mm:ss')} />
-                    <Legend />
-                    <Line
-                      type="monotone"
-                      dataKey="pressAvg"
-                      stroke="#f59e0b"
-                      name="Pressure (psi)"
-                      strokeWidth={2}
-                      dot={false}
-                      isAnimationActive={false}
-                    />
-                    {dragStart != null && dragEnd != null && dragStart !== dragEnd && (
-                      <ReferenceArea
-                        x1={Math.min(dragStart, dragEnd)}
-                        x2={Math.max(dragStart, dragEnd)}
-                        strokeOpacity={0.3}
-                        fill="#3b82f6"
-                        fillOpacity={0.15}
-                      />
-                    )}
-                  </LineChart>
                 </ResponsiveContainer>
               </div>
             </div>

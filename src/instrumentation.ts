@@ -42,5 +42,15 @@ export async function register() {
     })
 
     console.log('[Scheduler] Hourly summary-report tick scheduled')
+
+    // Per-minute MISSING_DATA sweep. Sensor stream cadence is ~1 row/minute,
+    // so a 1-min tick keeps detection latency aligned with the data cadence.
+    // The check itself is self-guarding and never throws.
+    const { checkMissingData } = await import('./lib/threshold-detection')
+    cron.default.schedule('* * * * *', async () => {
+      await checkMissingData()
+    })
+
+    console.log('[Scheduler] Per-minute missing-data tick scheduled')
   }
 }

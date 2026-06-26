@@ -579,6 +579,113 @@ export default function SettingsPage() {
                         Automatically delete data older than this period
                       </p>
                     </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Alert conditions — global trigger thresholds. Per-user opt-in
+                  to *receive* each alert lives on the user's Notifications tab. */}
+              <div className="bg-white shadow rounded-lg">
+                <div className="px-4 py-5 sm:p-6">
+                  <h3 className="text-lg leading-6 font-medium text-gray-900 mb-1">
+                    Alert Conditions
+                  </h3>
+                  <p className="text-sm text-gray-500 mb-4">
+                    Global trigger thresholds. Each user controls which alerts they receive on their Notifications tab.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        High Current Threshold (A)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={
+                          systemSettings.highCurrentThresholdAmps !== undefined
+                            ? Number(systemSettings.highCurrentThresholdAmps)
+                            : 7.2
+                        }
+                        onChange={(e) => setSystemSettings({
+                          ...systemSettings,
+                          highCurrentThresholdAmps: parseFloat(e.target.value)
+                        })}
+                        min="0"
+                        className="mt-1 block w-32 border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                      />
+                      <p className="mt-1 text-sm text-gray-500">
+                        Fire when RMS current exceeds this many amps.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        Low Pressure Threshold (PSI)
+                      </label>
+                      <input
+                        type="number"
+                        step="1"
+                        value={
+                          systemSettings.lowPressureThresholdPsi !== undefined
+                            ? Number(systemSettings.lowPressureThresholdPsi)
+                            : 30
+                        }
+                        onChange={(e) => setSystemSettings({
+                          ...systemSettings,
+                          lowPressureThresholdPsi: parseFloat(e.target.value)
+                        })}
+                        min="0"
+                        className="mt-1 block w-32 border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                      />
+                      <p className="mt-1 text-sm text-gray-500">
+                        Fire when pressure drops at or below this PSI.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        Low Temperature Threshold (°F)
+                      </label>
+                      <input
+                        type="number"
+                        step="1"
+                        value={
+                          systemSettings.lowTemperatureThresholdF !== undefined
+                            ? Number(systemSettings.lowTemperatureThresholdF)
+                            : 35
+                        }
+                        onChange={(e) => setSystemSettings({
+                          ...systemSettings,
+                          lowTemperatureThresholdF: parseFloat(e.target.value)
+                        })}
+                        className="mt-1 block w-32 border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                      />
+                      <p className="mt-1 text-sm text-gray-500">
+                        Fire when temperature drops at or below this °F.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        Missing Data Timeout (minutes)
+                      </label>
+                      <input
+                        type="number"
+                        step="1"
+                        value={
+                          systemSettings.missingDataTimeoutMinutes !== undefined
+                            ? Number(systemSettings.missingDataTimeoutMinutes)
+                            : 10
+                        }
+                        onChange={(e) => setSystemSettings({
+                          ...systemSettings,
+                          missingDataTimeoutMinutes: parseInt(e.target.value)
+                        })}
+                        min="0"
+                        max="1440"
+                        className="mt-1 block w-32 border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                      />
+                      <p className="mt-1 text-sm text-gray-500">
+                        Fire when no sensor data has been received for this many minutes.
+                      </p>
+                    </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700">
                         Long Pump Run Threshold (minutes)
@@ -595,18 +702,18 @@ export default function SettingsPage() {
                         className="mt-1 block w-32 border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                       />
                       <p className="mt-1 text-sm text-gray-500">
-                        Fire an alert when the pump has been running continuously for this many minutes. Set to 0 to disable.
+                        Fire when the pump has been running continuously for this many minutes. Set to 0 to disable.
                       </p>
                     </div>
-                    <div>
-                      <button
-                        onClick={saveSystemSettings}
-                        disabled={savingSystem}
-                        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
-                      >
-                        {savingSystem ? 'Saving...' : 'Save System Settings'}
-                      </button>
-                    </div>
+                  </div>
+                  <div className="mt-6">
+                    <button
+                      onClick={saveSystemSettings}
+                      disabled={savingSystem}
+                      className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+                    >
+                      {savingSystem ? 'Saving...' : 'Save System Settings'}
+                    </button>
                   </div>
                 </div>
               </div>

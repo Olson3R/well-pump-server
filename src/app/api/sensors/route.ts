@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { Prisma } from '@prisma/client'
 import { getAuthContext, hasPermission } from '@/lib/auth-middleware'
 import { checkAndRecordLongRun } from '@/lib/long-run-detection'
+import { checkSensorThresholds } from '@/lib/threshold-detection'
 
 export async function POST(request: NextRequest) {
   try {
@@ -71,9 +72,25 @@ export async function POST(request: NextRequest) {
       data: sensorData
     })
 
-    // Server-side "pump constantly running" detection runs against the rolling
-    // sensor stream once each row lands. Guarded so an alerting bug can never
-    // cause ingestion (which is the device's only way to persist data) to 502.
+    // Server-side condition detection runs against each freshly-saved row.
+    // Both calls are guarded so an alerting bug can never cause ingestion
+    // (the device's only way to persist data) to 502.
+    try {
+      await checkSensorThresholds(
+        data.device,
+        data.location,
+        {
+          current1RMS: data.current1RMS,
+          current2RMS: data.current2RMS,
+          pressMin: data.pressMin,
+          tempMin: data.tempMin,
+        },
+        timestamp,
+      )
+    } catch (thresholdError) {
+      console.error('Error in threshold detection:', thresholdError)
+    }
+
     try {
       await checkAndRecordLongRun(data.device, data.location, timestamp)
     } catch (longRunError) {

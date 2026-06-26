@@ -51,6 +51,7 @@ model NotificationSettings {
   sensorErrorAlert     Boolean @default(true)
   missingDataAlert     Boolean @default(true)
   longRunAlert         Boolean @default(true)
+  pressureDropAlert    Boolean @default(true)
 
   // Scheduled summary report sent via Pushover. Fires at `summaryReportHourLocal`
   // in `summaryReportTimezone`; for the "week" period it only fires on Monday.
@@ -196,4 +197,5 @@ enum EventType {
   SYSTEM_ERROR
   MISSING_DATA
   LONG_PUMP_RUN
+  PRESSURE_DROP
 }

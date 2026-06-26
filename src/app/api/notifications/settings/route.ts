@@ -34,6 +34,7 @@ export async function GET() {
           sensorErrorAlert: true,
           missingDataAlert: true,
           longRunAlert: true,
+          pressureDropAlert: true,
         },
       })
       return NextResponse.json(newSettings)

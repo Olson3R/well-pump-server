@@ -30,6 +30,7 @@ interface NotificationSettings {
   sensorErrorAlert: boolean
   missingDataAlert: boolean
   longRunAlert: boolean
+  pressureDropAlert: boolean
   // Scheduled summary report delivered via Pushover.
   summaryReportEnabled: boolean
   summaryReportHourLocal: number
@@ -512,7 +513,8 @@ export default function SettingsPage() {
                       { key: 'lowTemperatureAlert', label: 'Low Temperature Alerts' },
                       { key: 'sensorErrorAlert', label: 'Sensor Error Alerts' },
                       { key: 'missingDataAlert', label: 'Missing Data Alerts' },
-                      { key: 'longRunAlert', label: 'Long Pump Run Alerts' }
+                      { key: 'longRunAlert', label: 'Long Pump Run Alerts' },
+                      { key: 'pressureDropAlert', label: 'Leak / Open Fixture Alerts' }
                     ].map((alert) => (
                       <div key={alert.key} className="flex items-center">
                         <input
@@ -703,6 +705,53 @@ export default function SettingsPage() {
                       />
                       <p className="mt-1 text-sm text-gray-500">
                         Fire when the pump has been running continuously for this many minutes. Set to 0 to disable.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        Pressure Drop Threshold (PSI)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        value={
+                          systemSettings.pressureDropThresholdPsi !== undefined
+                            ? Number(systemSettings.pressureDropThresholdPsi)
+                            : 3
+                        }
+                        onChange={(e) => setSystemSettings({
+                          ...systemSettings,
+                          pressureDropThresholdPsi: parseFloat(e.target.value)
+                        })}
+                        min="0"
+                        className="mt-1 block w-32 border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                      />
+                      <p className="mt-1 text-sm text-gray-500">
+                        Fire on a drop of at least this many PSI while pump is off (possible leak/open fixture).
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        Pressure Drop Window (minutes)
+                      </label>
+                      <input
+                        type="number"
+                        step="1"
+                        value={
+                          systemSettings.pressureDropDurationMinutes !== undefined
+                            ? Number(systemSettings.pressureDropDurationMinutes)
+                            : 10
+                        }
+                        onChange={(e) => setSystemSettings({
+                          ...systemSettings,
+                          pressureDropDurationMinutes: parseInt(e.target.value)
+                        })}
+                        min="0"
+                        max="1440"
+                        className="mt-1 block w-32 border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                      />
+                      <p className="mt-1 text-sm text-gray-500">
+                        Drop must persist for at least this many minutes before firing.
                       </p>
                     </div>
                   </div>

@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client'
 import { getAuthContext, hasPermission } from '@/lib/auth-middleware'
 import { checkAndRecordLongRun } from '@/lib/long-run-detection'
 import { checkSensorThresholds } from '@/lib/threshold-detection'
+import { checkAndRecordPressureDrop } from '@/lib/leak-detection'
 
 export async function POST(request: NextRequest) {
   try {
@@ -95,6 +96,12 @@ export async function POST(request: NextRequest) {
       await checkAndRecordLongRun(data.device, data.location, timestamp)
     } catch (longRunError) {
       console.error('Error in long-run detection:', longRunError)
+    }
+
+    try {
+      await checkAndRecordPressureDrop(data.device, data.location, timestamp)
+    } catch (leakError) {
+      console.error('Error in leak detection:', leakError)
     }
 
     return NextResponse.json(

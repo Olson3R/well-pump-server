@@ -32,7 +32,8 @@ const eventTypeColors = {
   LOW_TEMPERATURE: 'border-blue-400 bg-blue-50',
   SENSOR_ERROR: 'border-purple-400 bg-purple-50',
   SYSTEM_ERROR: 'border-gray-400 bg-gray-50',
-  MISSING_DATA: 'border-orange-400 bg-orange-50'
+  MISSING_DATA: 'border-orange-400 bg-orange-50',
+  LONG_PUMP_RUN: 'border-amber-400 bg-amber-50'
 }
 
 const eventTypeIcons = {
@@ -41,7 +42,8 @@ const eventTypeIcons = {
   LOW_TEMPERATURE: '❄️',
   SENSOR_ERROR: '🔧',
   SYSTEM_ERROR: '⚠️',
-  MISSING_DATA: '📡'
+  MISSING_DATA: '📡',
+  LONG_PUMP_RUN: '⏱️'
 }
 
 export default function AlertsPage() {

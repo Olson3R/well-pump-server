@@ -38,6 +38,7 @@ export type NotificationEventType =
   | 'SENSOR_ERROR'
   | 'SYSTEM_ERROR'
   | 'MISSING_DATA'
+  | 'LONG_PUMP_RUN'
 
 export interface NotificationPayload {
   /** Event type used to honour each user's per-type alert preferences. */
@@ -87,6 +88,7 @@ const ALERT_PREFERENCE_FIELD: Record<string, string | undefined> = {
   LOW_TEMPERATURE: 'lowTemperatureAlert',
   SENSOR_ERROR: 'sensorErrorAlert',
   MISSING_DATA: 'missingDataAlert',
+  LONG_PUMP_RUN: 'longRunAlert',
   // SYSTEM_ERROR intentionally absent -> always notify.
 }
 
@@ -482,6 +484,7 @@ const EVENT_TITLES: Record<string, string> = {
   SENSOR_ERROR: 'Sensor Error',
   SYSTEM_ERROR: 'System Error',
   MISSING_DATA: 'Missing Data Alert',
+  LONG_PUMP_RUN: 'Pump Running Too Long',
 }
 
 /**

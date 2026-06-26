@@ -29,6 +29,7 @@ interface NotificationSettings {
   lowTemperatureAlert: boolean
   sensorErrorAlert: boolean
   missingDataAlert: boolean
+  longRunAlert: boolean
   // Scheduled summary report delivered via Pushover.
   summaryReportEnabled: boolean
   summaryReportHourLocal: number
@@ -52,6 +53,7 @@ export default function SettingsPage() {
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null)
   const [systemSettings, setSystemSettings] = useState<Record<string, string | number | boolean>>({})
   const [saving, setSaving] = useState(false)
+  const [savingSystem, setSavingSystem] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
   const [cleanupLogs, setCleanupLogs] = useState<CleanupLog[]>([])
   const [cleaningUp, setCleaningUp] = useState(false)
@@ -155,6 +157,29 @@ export default function SettingsPage() {
         type: 'error',
         text: error instanceof Error ? error.message : 'Error sending summary',
       })
+    }
+  }
+
+  const saveSystemSettings = async () => {
+    setSavingSystem(true)
+    setMessage(null)
+
+    try {
+      const response = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(systemSettings)
+      })
+
+      if (response.ok) {
+        setMessage({ type: 'success', text: 'System settings saved successfully' })
+      } else {
+        throw new Error('Failed to save settings')
+      }
+    } catch {
+      setMessage({ type: 'error', text: 'Error saving system settings' })
+    } finally {
+      setSavingSystem(false)
     }
   }
 
@@ -486,7 +511,8 @@ export default function SettingsPage() {
                       { key: 'lowPressureAlert', label: 'Low Pressure Alerts' },
                       { key: 'lowTemperatureAlert', label: 'Low Temperature Alerts' },
                       { key: 'sensorErrorAlert', label: 'Sensor Error Alerts' },
-                      { key: 'missingDataAlert', label: 'Missing Data Alerts' }
+                      { key: 'missingDataAlert', label: 'Missing Data Alerts' },
+                      { key: 'longRunAlert', label: 'Long Pump Run Alerts' }
                     ].map((alert) => (
                       <div key={alert.key} className="flex items-center">
                         <input
@@ -552,6 +578,34 @@ export default function SettingsPage() {
                       <p className="mt-1 text-sm text-gray-500">
                         Automatically delete data older than this period
                       </p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        Long Pump Run Threshold (minutes)
+                      </label>
+                      <input
+                        type="number"
+                        value={Number(systemSettings.longPumpRunThresholdMinutes) || 60}
+                        onChange={(e) => setSystemSettings({
+                          ...systemSettings,
+                          longPumpRunThresholdMinutes: parseInt(e.target.value)
+                        })}
+                        min="0"
+                        max="1440"
+                        className="mt-1 block w-32 border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                      />
+                      <p className="mt-1 text-sm text-gray-500">
+                        Fire an alert when the pump has been running continuously for this many minutes. Set to 0 to disable.
+                      </p>
+                    </div>
+                    <div>
+                      <button
+                        onClick={saveSystemSettings}
+                        disabled={savingSystem}
+                        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+                      >
+                        {savingSystem ? 'Saving...' : 'Save System Settings'}
+                      </button>
                     </div>
                   </div>
                 </div>

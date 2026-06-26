@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { Prisma } from '@prisma/client'
 import { getAuthContext, hasPermission } from '@/lib/auth-middleware'
+import { checkAndRecordLongRun } from '@/lib/long-run-detection'
 
 export async function POST(request: NextRequest) {
   try {
@@ -70,11 +71,20 @@ export async function POST(request: NextRequest) {
       data: sensorData
     })
 
+    // Server-side "pump constantly running" detection runs against the rolling
+    // sensor stream once each row lands. Guarded so an alerting bug can never
+    // cause ingestion (which is the device's only way to persist data) to 502.
+    try {
+      await checkAndRecordLongRun(data.device, data.location, timestamp)
+    } catch (longRunError) {
+      console.error('Error in long-run detection:', longRunError)
+    }
+
     return NextResponse.json(
-      { 
-        success: true, 
+      {
+        success: true,
         id: result.id,
-        message: 'Sensor data saved successfully' 
+        message: 'Sensor data saved successfully'
       },
       { status: 201 }
     )

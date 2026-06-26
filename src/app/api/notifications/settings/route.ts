@@ -33,6 +33,7 @@ export async function GET() {
           lowTemperatureAlert: true,
           sensorErrorAlert: true,
           missingDataAlert: true,
+          longRunAlert: true,
         },
       })
       return NextResponse.json(newSettings)

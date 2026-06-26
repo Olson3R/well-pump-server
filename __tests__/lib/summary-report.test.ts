@@ -94,6 +94,8 @@ describe('buildSummaryReport', () => {
         endTime: new Date('2026-06-26T07:00:00Z'),
         dutyCycle1: 100,
         pressMin: 45,
+        tempMin: 18.4,
+        tempMax: 19.1,
         device: 'well-pump-monitor',
       },
     ])
@@ -107,10 +109,13 @@ describe('buildSummaryReport', () => {
     expect(report.stats.pumpRunCount).toBe(1)
     expect(report.stats.pumpDurationSeconds).toBe(60)
     expect(report.activeAlerts).toBe(2)
+    expect(report.tempMinC).toBe(18.4)
+    expect(report.tempMaxC).toBe(19.1)
     expect(report.title).toMatch(/daily/i)
     expect(report.body).toContain('Last 24 hours')
     expect(report.body).toContain('Pump runs: 1')
     expect(report.body).toContain('Pump runtime: 1m')
+    expect(report.body).toContain('Temperature: 18.4°C – 19.1°C')
     expect(report.body).toContain('Active alerts: 2')
 
     // Window bounds passed to Prisma match what we just asserted.
@@ -128,6 +133,57 @@ describe('buildSummaryReport', () => {
     expect(report.start.getTime()).toBe(now.getTime() - 7 * DAY)
     expect(report.title).toMatch(/weekly/i)
     expect(report.body).toContain('Last 7 days')
+  })
+
+  it('reports the coldest tempMin and hottest tempMax across rows', async () => {
+    mockPrisma.sensorData.findMany.mockResolvedValue([
+      {
+        timestamp: new Date('2026-06-26T01:00:00Z'),
+        startTime: new Date('2026-06-26T00:59:00Z'),
+        endTime: new Date('2026-06-26T01:00:00Z'),
+        dutyCycle1: 0,
+        pressMin: 50,
+        tempMin: 12.1,
+        tempMax: 14.5,
+        device: 'd',
+      },
+      {
+        timestamp: new Date('2026-06-26T02:00:00Z'),
+        startTime: new Date('2026-06-26T01:59:00Z'),
+        endTime: new Date('2026-06-26T02:00:00Z'),
+        dutyCycle1: 0,
+        pressMin: 50,
+        tempMin: 9.8, // coldest
+        tempMax: 13.0,
+        device: 'd',
+      },
+      {
+        timestamp: new Date('2026-06-26T03:00:00Z'),
+        startTime: new Date('2026-06-26T02:59:00Z'),
+        endTime: new Date('2026-06-26T03:00:00Z'),
+        dutyCycle1: 0,
+        pressMin: 50,
+        tempMin: 11.0,
+        tempMax: 22.7, // hottest
+        device: 'd',
+      },
+    ])
+
+    const report = await buildSummaryReport('day')
+
+    expect(report.tempMinC).toBe(9.8)
+    expect(report.tempMaxC).toBe(22.7)
+    expect(report.body).toContain('Temperature: 9.8°C – 22.7°C')
+  })
+
+  it('omits the temperature line when the window had no readings', async () => {
+    mockPrisma.sensorData.findMany.mockResolvedValue([])
+
+    const report = await buildSummaryReport('day')
+
+    expect(report.tempMinC).toBeNull()
+    expect(report.tempMaxC).toBeNull()
+    expect(report.body).not.toContain('Temperature')
   })
 })
 

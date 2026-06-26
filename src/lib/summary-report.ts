@@ -37,6 +37,13 @@ export interface SummaryReportPayload {
   end: Date
   stats: AggregatedStats
   activeAlerts: number
+  /**
+   * Coldest / hottest temperature observed across all rows in the window.
+   * Both `null` when the window contained no data — the body line is then
+   * suppressed so we don't show "n/a".
+   */
+  tempMinC: number | null
+  tempMaxC: number | null
   /** Title and body as they'll appear in the Pushover notification. */
   title: string
   body: string
@@ -81,6 +88,8 @@ export async function buildSummaryReport(
       endTime: true,
       dutyCycle1: true,
       pressMin: true,
+      tempMin: true,
+      tempMax: true,
       device: true,
     },
     orderBy: { timestamp: 'asc' },
@@ -88,11 +97,32 @@ export async function buildSummaryReport(
 
   const stats = computeStatsFromRows(rows, thresholds)
   const activeAlerts = await prisma.event.count({ where: { active: true } })
+  const { tempMinC, tempMaxC } = aggregateTemperatures(rows)
 
   const title = period === 'week' ? 'Weekly well-pump summary' : 'Daily well-pump summary'
-  const body = formatSummaryBody(period, stats, activeAlerts)
+  const body = formatSummaryBody(period, stats, activeAlerts, tempMinC, tempMaxC)
 
-  return { period, start, end, stats, activeAlerts, title, body }
+  return { period, start, end, stats, activeAlerts, tempMinC, tempMaxC, title, body }
+}
+
+/**
+ * Collapse per-row tempMin/tempMax into the coldest and hottest temperature
+ * observed across the whole window. Filters out non-finite values so a single
+ * dropped sensor reading can't poison the aggregate.
+ */
+function aggregateTemperatures(
+  rows: ReadonlyArray<{ tempMin: number; tempMax: number }>,
+): { tempMinC: number | null; tempMaxC: number | null } {
+  let lo = Number.POSITIVE_INFINITY
+  let hi = Number.NEGATIVE_INFINITY
+  for (const row of rows) {
+    if (Number.isFinite(row.tempMin) && row.tempMin < lo) lo = row.tempMin
+    if (Number.isFinite(row.tempMax) && row.tempMax > hi) hi = row.tempMax
+  }
+  return {
+    tempMinC: Number.isFinite(lo) ? lo : null,
+    tempMaxC: Number.isFinite(hi) ? hi : null,
+  }
 }
 
 /**
@@ -195,6 +225,8 @@ function formatSummaryBody(
   period: SummaryReportPeriod,
   stats: AggregatedStats,
   activeAlerts: number,
+  tempMinC: number | null,
+  tempMaxC: number | null,
 ): string {
   const range = period === 'week' ? 'Last 7 days' : 'Last 24 hours'
   const avgRunStr =
@@ -210,9 +242,18 @@ function formatSummaryBody(
     `• Pump runtime: ${formatDuration(stats.pumpDurationSeconds)}`,
     `• Low-pressure events: ${stats.lowPressureEventCount}${avgLowStr}`,
     `• Low-pressure time: ${formatDuration(stats.lowPressureDurationSeconds)}`,
-    `• Active alerts: ${activeAlerts}`,
   ]
+  // Drop the temperature line entirely when the window had no readings rather
+  // than printing a confusing "n/a" alongside real numbers.
+  if (tempMinC !== null && tempMaxC !== null) {
+    lines.push(`• Temperature: ${formatTemp(tempMinC)} – ${formatTemp(tempMaxC)}`)
+  }
+  lines.push(`• Active alerts: ${activeAlerts}`)
   return lines.join('\n')
+}
+
+function formatTemp(celsius: number): string {
+  return `${celsius.toFixed(1)}°C`
 }
 
 function formatDuration(seconds: number): string {

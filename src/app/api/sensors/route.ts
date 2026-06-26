@@ -247,22 +247,25 @@ export async function GET(request: NextRequest) {
 
     if (interval) {
       const aggregatedData = await aggregateWindow(interval, start as Date, end as Date, device)
-      return NextResponse.json({
-        data: aggregatedData,
-        aggregation: {
-          interval,
-          auto: autoAggregated,
-          startDate: (start as Date).toISOString(),
-          endDate: (end as Date).toISOString(),
+      return NextResponse.json(
+        {
+          data: aggregatedData,
+          aggregation: {
+            interval,
+            auto: autoAggregated,
+            startDate: (start as Date).toISOString(),
+            endDate: (end as Date).toISOString(),
+          },
+          pagination: {
+            // Aggregated responses always return every bucket for the window.
+            total: aggregatedData.length,
+            returned: aggregatedData.length,
+            offset: 0,
+            hasMore: false,
+          },
         },
-        pagination: {
-          // Aggregated responses always return every bucket for the window.
-          total: aggregatedData.length,
-          returned: aggregatedData.length,
-          offset: 0,
-          hasMore: false,
-        },
-      })
+        { headers: { 'Cache-Control': 'no-store' } }
+      )
     }
 
     // --- Raw rows ------------------------------------------------------------
@@ -287,17 +290,20 @@ export async function GET(request: NextRequest) {
       skip: offset,
     })
 
-    return NextResponse.json({
-      data: sensorData,
-      pagination: {
-        total,
-        ...(take !== undefined ? { limit: take } : {}),
-        offset,
-        returned: sensorData.length,
-        // hasMore is derived from what was actually returned, never hardcoded.
-        hasMore: offset + sensorData.length < total,
+    return NextResponse.json(
+      {
+        data: sensorData,
+        pagination: {
+          total,
+          ...(take !== undefined ? { limit: take } : {}),
+          offset,
+          returned: sensorData.length,
+          // hasMore is derived from what was actually returned, never hardcoded.
+          hasMore: offset + sensorData.length < total,
+        },
       },
-    })
+      { headers: { 'Cache-Control': 'no-store' } }
+    )
   } catch (error) {
     console.error('Error fetching sensor data:', error)
     return NextResponse.json(

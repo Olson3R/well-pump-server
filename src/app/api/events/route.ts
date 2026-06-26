@@ -233,15 +233,18 @@ export async function GET(request: NextRequest) {
       duration: event.duration.toString()
     }))
 
-    return NextResponse.json({
-      data: serializedEvents,
-      pagination: {
-        total,
-        limit,
-        offset,
-        hasMore: offset + limit < total
-      }
-    })
+    return NextResponse.json(
+      {
+        data: serializedEvents,
+        pagination: {
+          total,
+          limit,
+          offset,
+          hasMore: offset + limit < total
+        }
+      },
+      { headers: { 'Cache-Control': 'no-store' } }
+    )
 
   } catch (error) {
     console.error('Error fetching events:', error)

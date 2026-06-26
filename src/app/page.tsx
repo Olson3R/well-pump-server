@@ -52,8 +52,8 @@ export default function Dashboard() {
   const refreshDashboard = useCallback(async (signal: AbortSignal) => {
     try {
       const [sensorRes, eventsRes] = await Promise.all([
-        fetch('/api/sensors?limit=1', { signal }),
-        fetch('/api/events?active=true&limit=10', { signal }),
+        fetch('/api/sensors?limit=1', { signal, cache: 'no-store' }),
+        fetch('/api/events?active=true&limit=10', { signal, cache: 'no-store' }),
       ])
 
       if (!sensorRes.ok) {

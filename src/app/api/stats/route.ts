@@ -167,15 +167,18 @@ export async function GET(request: NextRequest) {
       sampleCount: toNumber(row.sample_count),
     }
 
-    return NextResponse.json({
-      stats: buildAggregatedStats(totals),
-      range: {
-        startDate: start ? start.toISOString() : null,
-        endDate: end ? end.toISOString() : null,
-        device: device ?? null,
+    return NextResponse.json(
+      {
+        stats: buildAggregatedStats(totals),
+        range: {
+          startDate: start ? start.toISOString() : null,
+          endDate: end ? end.toISOString() : null,
+          device: device ?? null,
+        },
+        thresholds: { dutyCycleThreshold, pressureThreshold, runMergeGapSeconds },
       },
-      thresholds: { dutyCycleThreshold, pressureThreshold, runMergeGapSeconds },
-    })
+      { headers: { 'Cache-Control': 'no-store' } }
+    )
   } catch (error) {
     console.error('Error computing stats:', error)
     return NextResponse.json(

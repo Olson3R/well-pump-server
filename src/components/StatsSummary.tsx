@@ -175,7 +175,10 @@ export function StatsSummary({
       if (device) params.set('device', device)
 
       const query = params.toString()
-      const res = await fetch(`/api/stats${query ? `?${query}` : ''}`, { signal })
+      const res = await fetch(`/api/stats${query ? `?${query}` : ''}`, {
+        signal,
+        cache: 'no-store',
+      })
       if (!res.ok) {
         throw new Error(`Stats request failed (${res.status})`)
       }

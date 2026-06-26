@@ -247,7 +247,7 @@ export default function DataPage() {
             ? baseUrl
             : `${baseUrl}&limit=${RAW_PAGE_SIZE}&offset=${offset}`
 
-        const response = await fetch(url, { signal })
+        const response = await fetch(url, { signal, cache: 'no-store' })
         if (!response.ok) {
           throw new Error(`Request failed with status ${response.status}`)
         }

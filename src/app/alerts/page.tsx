@@ -62,7 +62,9 @@ export default function AlertsPage() {
       if (filter === 'active') params.append('active', 'true')
       else if (filter === 'acknowledged') params.append('acknowledged', 'true')
       
-      const response = await fetch(`/api/events?${params}&limit=100`)
+      const response = await fetch(`/api/events?${params}&limit=100`, {
+        cache: 'no-store',
+      })
       const result = await response.json()
       
       if (result.data) {

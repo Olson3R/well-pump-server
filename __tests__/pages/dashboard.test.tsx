@@ -12,8 +12,8 @@ const sensorRow = {
   location: 'Pump House',
   timestamp: '2023-01-01T12:30:45.000Z',
   tempAvg: 20.5,
-  current1Avg: 2.3,
-  current2Avg: 0.1,
+  current1RMS: 2.3,
+  current2RMS: 0.1,
   pressAvg: 40.2,
   humAvg: 65.0,
 }

@@ -22,8 +22,8 @@ interface SensorData {
   location: string
   timestamp: string
   tempAvg: number
-  current1Avg: number
-  current2Avg: number
+  current1RMS: number
+  current2RMS: number
   pressAvg: number
   humAvg: number
 }
@@ -274,13 +274,13 @@ export default function Dashboard() {
                     <div className="border rounded-lg p-3">
                       <div className="text-sm font-medium text-gray-500">Current 1</div>
                       <div className="text-2xl font-bold text-gray-900">
-                        {latestData.current1Avg.toFixed(2)} A
+                        {latestData.current1RMS.toFixed(2)} A
                       </div>
                     </div>
                     <div className="border rounded-lg p-3">
                       <div className="text-sm font-medium text-gray-500">Current 2</div>
                       <div className="text-2xl font-bold text-gray-900">
-                        {latestData.current2Avg.toFixed(2)} A
+                        {latestData.current2RMS.toFixed(2)} A
                       </div>
                     </div>
                   </div>

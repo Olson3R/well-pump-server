@@ -15,6 +15,7 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
+  ReferenceArea,
   ResponsiveContainer
 } from 'recharts'
 import { format } from 'date-fns'
@@ -22,7 +23,8 @@ import {
   ArrowDownTrayIcon,
   ArrowPathIcon,
   ChartBarIcon,
-  TableCellsIcon
+  TableCellsIcon,
+  XMarkIcon
 } from '@heroicons/react/24/outline'
 
 interface SensorData {
@@ -98,6 +100,9 @@ const AUTO_REFRESH_MS = 60_000
  * optional aggregation hint. Pure (no component state) so it can be reused by
  * both the manual and the auto-refresh paths and unit-tested in isolation.
  *
+ * `selectedRange` (a drag-zoom on the chart) wins over both presets and the
+ * custom date bounds — the user is asking for an explicit ms-precision window.
+ *
  * Both custom bounds are derived in the SAME (local) zone: parsing a bare
  * 'YYYY-MM-DD' yields UTC midnight, which—paired with a local end-of-day—
  * previously dropped the final selected day in non-UTC zones. Explicit
@@ -106,8 +111,19 @@ const AUTO_REFRESH_MS = 60_000
 function resolveWindow(
   timeRange: string,
   customStart?: string,
-  customEnd?: string
+  customEnd?: string,
+  selectedRange?: { start: Date; end: Date } | null
 ): { startDate: Date; endDate: Date; aggregate: string } {
+  if (selectedRange) {
+    const { start: startDate, end: endDate } = selectedRange
+    const spanDays =
+      (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)
+    let aggregate = ''
+    if (spanDays > 7) aggregate = '6hour'
+    else if (spanDays > 1) aggregate = 'hour'
+    return { startDate, endDate, aggregate }
+  }
+
   let startDate: Date
   let endDate: Date
   let aggregate = ''
@@ -162,9 +178,17 @@ export default function DataPage() {
   // This keeps the poll from firing against a window the user is still picking.
   const [customLoaded, setCustomLoaded] = useState(false)
 
-  // Whether the current selection is queryable. Preset ranges always are; a
-  // custom range only once it's been explicitly loaded.
-  const canQuery = timeRange !== 'custom' || customLoaded
+  // Drag-zoom: an explicit ms-precision window committed by dragging across any
+  // chart. When set it overrides the dropdown / custom dates until cleared.
+  const [selectedRange, setSelectedRange] = useState<{ start: Date; end: Date } | null>(null)
+  // In-progress drag selection (shared across all charts so the highlight is
+  // visible everywhere while the user drags). Cleared on mouseup / mouseleave.
+  const [dragStart, setDragStart] = useState<number | null>(null)
+  const [dragEnd, setDragEnd] = useState<number | null>(null)
+
+  // Whether the current selection is queryable. A drag-zoomed range always is;
+  // preset ranges always are; a custom range only once it's been loaded.
+  const canQuery = !!selectedRange || timeRange !== 'custom' || customLoaded
 
   /**
    * Load the ENTIRE active window and replace the dataset. Reads the current
@@ -181,15 +205,17 @@ export default function DataPage() {
   const loadWindow = useCallback(
     async (signal: AbortSignal) => {
       // Custom range without both bounds: nothing to query. Leave the existing
-      // data/coverage intact and don't record a (mis)load.
-      if (timeRange === 'custom' && !(customStartDate && customEndDate)) {
+      // data/coverage intact and don't record a (mis)load. A drag-zoom
+      // selection bypasses this gate (it carries its own bounds).
+      if (!selectedRange && timeRange === 'custom' && !(customStartDate && customEndDate)) {
         return
       }
 
       const { startDate, endDate, aggregate } = resolveWindow(
         timeRange,
         customStartDate,
-        customEndDate
+        customEndDate,
+        selectedRange
       )
 
       // Record span (drives x-axis label formatting).
@@ -259,7 +285,7 @@ export default function DataPage() {
         truncated,
       })
     },
-    [timeRange, customStartDate, customEndDate]
+    [timeRange, customStartDate, customEndDate, selectedRange]
   )
 
   // Shared auto/manual refresh: polls every minute, pauses on a hidden tab, and
@@ -293,15 +319,71 @@ export default function DataPage() {
     setCustomLoaded(false)
   }, [customStartDate, customEndDate])
 
+  // Committing a drag-zoom selection refetches at the new window. Clearing it
+  // (back to null) falls through to the dropdown / custom path on the next
+  // refresh — no immediate fetch needed because that's what the other effects
+  // are for.
+  useEffect(() => {
+    if (selectedRange) {
+      void refresh()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRange])
+
   const handleRefresh = () => {
     void refresh()
   }
 
   const handleCustomDateFetch = () => {
     if (customStartDate && customEndDate) {
+      setSelectedRange(null)
       setCustomLoaded(true)
       void refresh()
     }
+  }
+
+  const handleTimeRangeChange = (value: string) => {
+    setSelectedRange(null)
+    setTimeRange(value)
+  }
+
+  const handleClearSelection = () => {
+    setSelectedRange(null)
+    // Re-query the active dropdown / custom window so the chart reverts to it
+    // without waiting for the next auto-refresh tick.
+    if (timeRange !== 'custom' || customLoaded) {
+      void refresh()
+    }
+  }
+
+  // Recharts mouse-event payload — `activeLabel` is the value of the X-axis
+  // dataKey at the cursor (ms timestamp, since we use a numeric axis).
+  type ChartEvent = { activeLabel?: number | string } | null
+  const handleChartMouseDown = (e: ChartEvent) => {
+    if (e?.activeLabel == null) return
+    const t = Number(e.activeLabel)
+    if (!Number.isFinite(t)) return
+    setDragStart(t)
+    setDragEnd(null)
+  }
+  const handleChartMouseMove = (e: ChartEvent) => {
+    if (dragStart == null || e?.activeLabel == null) return
+    const t = Number(e.activeLabel)
+    if (!Number.isFinite(t)) return
+    setDragEnd(t)
+  }
+  const handleChartMouseUp = () => {
+    if (dragStart != null && dragEnd != null && dragStart !== dragEnd) {
+      const start = new Date(Math.min(dragStart, dragEnd))
+      const end = new Date(Math.max(dragStart, dragEnd))
+      setSelectedRange({ start, end })
+    }
+    setDragStart(null)
+    setDragEnd(null)
+  }
+  const handleChartMouseLeave = () => {
+    setDragStart(null)
+    setDragEnd(null)
   }
 
   const exportData = async (format: 'json' | 'csv') => {
@@ -327,21 +409,18 @@ export default function DataPage() {
     }
   }
 
-  const formatData = () => {
-    // Choose date format based on time range span
-    let dateFormat = 'HH:mm'
-    if (timeRange === '7d' || (timeRange === 'custom' && dateRangeSpan > 1 && dateRangeSpan <= 7)) {
-      dateFormat = 'EEE HH:mm' // e.g., "Mon 14:00"
-    } else if (timeRange === '30d' || (timeRange === 'custom' && dateRangeSpan > 7)) {
-      dateFormat = 'MMM d' // e.g., "Jan 15"
-    }
+  // Pick a tick label format from the actual visible span — driven by the
+  // resolved window rather than the dropdown, so a drag-zoomed selection picks
+  // an appropriate format too (e.g. zooming into 30 min of a 30d view should
+  // show HH:mm, not "MMM d").
+  const dateFormat =
+    dateRangeSpan > 7 ? 'MMM d' : dateRangeSpan > 1 ? 'EEE HH:mm' : 'HH:mm'
+  const formatTick = (ts: number) => format(new Date(ts), dateFormat)
 
-    return data.map(d => ({
-      ...d,
-      timestamp: new Date(d.timestamp).getTime(),
-      formattedTime: format(new Date(d.timestamp), dateFormat)
-    }))
-  }
+  const chartData = data.map(d => ({
+    ...d,
+    timestamp: new Date(d.timestamp).getTime(),
+  }))
 
   return (
     <ProtectedRoute>
@@ -420,7 +499,7 @@ export default function DataPage() {
 
                 <select
                   value={timeRange}
-                  onChange={(e) => setTimeRange(e.target.value)}
+                  onChange={(e) => handleTimeRangeChange(e.target.value)}
                   className="block w-full sm:w-auto pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
                 >
                   <option value="1h">Last Hour</option>
@@ -469,6 +548,31 @@ export default function DataPage() {
             </div>
           </div>
 
+          {/* Active drag-zoom selection — overrides the dropdown / custom
+              dates until cleared. */}
+          {selectedRange && (
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 bg-blue-50 border border-blue-200 rounded-md px-4 py-3 mb-4">
+              <span className="text-sm text-blue-900">
+                Showing selection:{' '}
+                <span className="font-medium">
+                  {format(selectedRange.start, 'MMM d, HH:mm:ss')}
+                </span>{' '}
+                →{' '}
+                <span className="font-medium">
+                  {format(selectedRange.end, 'MMM d, HH:mm:ss')}
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={handleClearSelection}
+                className="inline-flex items-center self-start sm:self-auto px-3 py-1.5 text-sm font-medium text-blue-700 hover:text-blue-900 hover:bg-blue-100 rounded-md"
+              >
+                <XMarkIcon className="h-4 w-4 mr-1" />
+                Clear selection
+              </button>
+            </div>
+          )}
+
           {/* Error banner — shown once a refresh actually fails. Auto-refresh
               keeps retrying on its interval, so the data isn't stuck. */}
           {error && (
@@ -513,19 +617,36 @@ export default function DataPage() {
             </div>
           ) : view === 'chart' ? (
             <div className="space-y-6">
+              {/* Drag-to-zoom hint — only shown when there's data to drag on. */}
+              {chartData.length > 0 && !selectedRange && (
+                <p className="text-xs text-gray-500 -mb-2">
+                  Tip: click and drag across any chart to zoom into a time range.
+                </p>
+              )}
+
               {/* Temperature & Humidity Chart */}
-              <div className="bg-white p-6 rounded-lg shadow">
+              <div className="bg-white p-6 rounded-lg shadow select-none">
                 <h3 className="text-lg font-medium text-gray-900 mb-4">Temperature & Humidity</h3>
                 <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={formatData()}>
+                  <LineChart
+                    data={chartData}
+                    onMouseDown={handleChartMouseDown}
+                    onMouseMove={handleChartMouseMove}
+                    onMouseUp={handleChartMouseUp}
+                    onMouseLeave={handleChartMouseLeave}
+                  >
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis 
-                      dataKey="formattedTime"
+                    <XAxis
+                      dataKey="timestamp"
+                      type="number"
+                      domain={['dataMin', 'dataMax']}
+                      scale="time"
+                      tickFormatter={formatTick}
                       interval="preserveStartEnd"
                     />
                     <YAxis yAxisId="temp" orientation="left" />
                     <YAxis yAxisId="humidity" orientation="right" />
-                    <Tooltip />
+                    <Tooltip labelFormatter={(ts) => format(new Date(Number(ts)), 'MMM d, HH:mm:ss')} />
                     <Legend />
                     <Line
                       yAxisId="temp"
@@ -535,6 +656,7 @@ export default function DataPage() {
                       name="Temperature (°C)"
                       strokeWidth={2}
                       dot={false}
+                      isAnimationActive={false}
                     />
                     <Line
                       yAxisId="humidity"
@@ -544,23 +666,44 @@ export default function DataPage() {
                       name="Humidity (%)"
                       strokeWidth={2}
                       dot={false}
+                      isAnimationActive={false}
                     />
+                    {dragStart != null && dragEnd != null && dragStart !== dragEnd && (
+                      <ReferenceArea
+                        yAxisId="temp"
+                        x1={Math.min(dragStart, dragEnd)}
+                        x2={Math.max(dragStart, dragEnd)}
+                        strokeOpacity={0.3}
+                        fill="#3b82f6"
+                        fillOpacity={0.15}
+                      />
+                    )}
                   </LineChart>
                 </ResponsiveContainer>
               </div>
 
               {/* Current Chart */}
-              <div className="bg-white p-6 rounded-lg shadow">
+              <div className="bg-white p-6 rounded-lg shadow select-none">
                 <h3 className="text-lg font-medium text-gray-900 mb-4">Current Consumption</h3>
                 <ResponsiveContainer width="100%" height={300}>
-                  <AreaChart data={formatData()}>
+                  <AreaChart
+                    data={chartData}
+                    onMouseDown={handleChartMouseDown}
+                    onMouseMove={handleChartMouseMove}
+                    onMouseUp={handleChartMouseUp}
+                    onMouseLeave={handleChartMouseLeave}
+                  >
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis 
-                      dataKey="formattedTime"
+                    <XAxis
+                      dataKey="timestamp"
+                      type="number"
+                      domain={['dataMin', 'dataMax']}
+                      scale="time"
+                      tickFormatter={formatTick}
                       interval="preserveStartEnd"
                     />
                     <YAxis />
-                    <Tooltip />
+                    <Tooltip labelFormatter={(ts) => format(new Date(Number(ts)), 'MMM d, HH:mm:ss')} />
                     <Legend />
                     <Area
                       type="monotone"
@@ -570,6 +713,7 @@ export default function DataPage() {
                       fill="#8b5cf6"
                       name="Current 1 RMS (A)"
                       fillOpacity={0.6}
+                      isAnimationActive={false}
                     />
                     <Area
                       type="monotone"
@@ -579,23 +723,43 @@ export default function DataPage() {
                       fill="#10b981"
                       name="Current 2 RMS (A)"
                       fillOpacity={0.6}
+                      isAnimationActive={false}
                     />
+                    {dragStart != null && dragEnd != null && dragStart !== dragEnd && (
+                      <ReferenceArea
+                        x1={Math.min(dragStart, dragEnd)}
+                        x2={Math.max(dragStart, dragEnd)}
+                        strokeOpacity={0.3}
+                        fill="#3b82f6"
+                        fillOpacity={0.15}
+                      />
+                    )}
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
 
               {/* Pressure Chart */}
-              <div className="bg-white p-6 rounded-lg shadow">
+              <div className="bg-white p-6 rounded-lg shadow select-none">
                 <h3 className="text-lg font-medium text-gray-900 mb-4">Pressure</h3>
                 <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={formatData()}>
+                  <LineChart
+                    data={chartData}
+                    onMouseDown={handleChartMouseDown}
+                    onMouseMove={handleChartMouseMove}
+                    onMouseUp={handleChartMouseUp}
+                    onMouseLeave={handleChartMouseLeave}
+                  >
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis 
-                      dataKey="formattedTime"
+                    <XAxis
+                      dataKey="timestamp"
+                      type="number"
+                      domain={['dataMin', 'dataMax']}
+                      scale="time"
+                      tickFormatter={formatTick}
                       interval="preserveStartEnd"
                     />
                     <YAxis />
-                    <Tooltip />
+                    <Tooltip labelFormatter={(ts) => format(new Date(Number(ts)), 'MMM d, HH:mm:ss')} />
                     <Legend />
                     <Line
                       type="monotone"
@@ -604,7 +768,17 @@ export default function DataPage() {
                       name="Pressure (psi)"
                       strokeWidth={2}
                       dot={false}
+                      isAnimationActive={false}
                     />
+                    {dragStart != null && dragEnd != null && dragStart !== dragEnd && (
+                      <ReferenceArea
+                        x1={Math.min(dragStart, dragEnd)}
+                        x2={Math.max(dragStart, dragEnd)}
+                        strokeOpacity={0.3}
+                        fill="#3b82f6"
+                        fillOpacity={0.15}
+                      />
+                    )}
                   </LineChart>
                 </ResponsiveContainer>
               </div>

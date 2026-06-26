@@ -4,7 +4,6 @@
  * API route handlers rely on the Web `Request`/`Response` globals that Next.js
  * provides under the Node test environment (they are absent under jsdom).
  */
-import { NextRequest } from 'next/server'
 import { GET } from '@/app/api/health/route'
 import { prisma } from '@/lib/prisma'
 
@@ -25,7 +24,7 @@ jest.mock('@/lib/prisma', () => ({
   },
 }))
 
-const mockPrisma = prisma as jest.Mocked<typeof prisma>
+const mockPrisma = prisma as unknown as DeepMocked<typeof prisma>
 
 describe('/api/health', () => {
   beforeEach(() => {
@@ -52,8 +51,7 @@ describe('/api/health', () => {
     mockPrisma.event.count.mockResolvedValue(0)
     mockPrisma.user.count.mockResolvedValue(1)
 
-    const request = new NextRequest('http://localhost:3000/api/health')
-    const response = await GET(request)
+    const response = await GET()
     const data = await response.json()
 
     expect(response.status).toBe(200)
@@ -75,8 +73,7 @@ describe('/api/health', () => {
     mockPrisma.event.count.mockResolvedValue(0)
     mockPrisma.user.count.mockResolvedValue(1)
 
-    const request = new NextRequest('http://localhost:3000/api/health')
-    const response = await GET(request)
+    const response = await GET()
     const data = await response.json()
 
     expect(response.status).toBe(200)
@@ -95,8 +92,7 @@ describe('/api/health', () => {
     mockPrisma.event.count.mockResolvedValue(3) // 3 active alerts
     mockPrisma.user.count.mockResolvedValue(1)
 
-    const request = new NextRequest('http://localhost:3000/api/health')
-    const response = await GET(request)
+    const response = await GET()
     const data = await response.json()
 
     expect(response.status).toBe(200)
@@ -115,8 +111,7 @@ describe('/api/health', () => {
     mockPrisma.event.count.mockResolvedValue(10) // 10 active alerts
     mockPrisma.user.count.mockResolvedValue(1)
 
-    const request = new NextRequest('http://localhost:3000/api/health')
-    const response = await GET(request)
+    const response = await GET()
     const data = await response.json()
 
     expect(response.status).toBe(200)
@@ -127,8 +122,7 @@ describe('/api/health', () => {
   it('should handle database connection errors', async () => {
     mockPrisma.$queryRaw.mockRejectedValue(new Error('Connection failed'))
 
-    const request = new NextRequest('http://localhost:3000/api/health')
-    const response = await GET(request)
+    const response = await GET()
     const data = await response.json()
 
     expect(response.status).toBe(503)
@@ -143,8 +137,7 @@ describe('/api/health', () => {
     mockPrisma.event.count.mockResolvedValue(0)
     mockPrisma.user.count.mockResolvedValue(1)
 
-    const request = new NextRequest('http://localhost:3000/api/health')
-    const response = await GET(request)
+    const response = await GET()
     const data = await response.json()
 
     expect(response.status).toBe(200)
@@ -166,8 +159,7 @@ describe('/api/health', () => {
       .mockResolvedValueOnce(150) // Total events count
     mockPrisma.user.count.mockResolvedValue(3)
 
-    const request = new NextRequest('http://localhost:3000/api/health')
-    const response = await GET(request)
+    const response = await GET()
     const data = await response.json()
 
     expect(data.stats).toEqual({

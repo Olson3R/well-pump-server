@@ -2,19 +2,29 @@
  * Stats aggregation helpers.
  *
  * The well-pump monitor stores raw `SensorData` rows (~1 row/minute), each row
- * being a summary over a short sampling window (`startTime` → `endTime`) with a
- * representative RMS current and a minimum pressure. From this raw data we derive
- * higher-level operational stats over an arbitrary time range:
+ * being a summary over a short sampling window (`startTime` → `endTime`). Each
+ * row carries `dutyCycle1` — the fraction of that window the pump was actually
+ * drawing pump-level current, as classified by the ESP32 at its high sampling
+ * rate. From this raw data we derive higher-level operational stats over an
+ * arbitrary time range:
  *
  *   - pump run count          (how many times the pump started)
  *   - total pump duration     (how long the pump ran in total)
  *   - low-pressure event count(how many times pressure dipped into the low band)
  *   - total low-pressure time (how long the system spent in low pressure)
  *
+ * Pump-on is detected from `dutyCycle1` (not RMS current) because the well-pump
+ * circuit has a non-zero idle draw — controllers / sensors / etc keep RMS above
+ * the noise floor even when the pump motor is off, so RMS-based detection
+ * collapses an entire day into a single "run". Duty cycle is the canonical
+ * pump-on signal computed at source.
+ *
  * Runs and low-pressure events are derived from STATE TRANSITIONS: each row is
- * classified as pump-on/off and low/normal pressure; a new run (or event) is
- * counted on every off→on (or normal→low) edge, and total durations are the sum
- * of the window spans of the rows in that state.
+ * classified as pump-on/off (dutyCycle1 > threshold) and low/normal pressure;
+ * a new run (or event) is counted on every off→on (or normal→low) edge. Total
+ * pump duration is the sum of `dutyCycle1 × windowSeconds` (actual seconds the
+ * pump ran), while low-pressure duration sums the full window of every row in
+ * the low state.
  *
  * The production endpoint (`/api/stats`) performs this aggregation server-side in
  * a single SQL query (window functions) so it stays cheap for long ranges. This
@@ -25,8 +35,11 @@
  */
 
 export interface StatsThresholds {
-  /** Pump is considered ON when `current1RMS` is at or above this many Amps. */
-  currentThreshold: number
+  /**
+   * Pump is considered ON in a row when `dutyCycle1` is strictly greater than
+   * this fraction (0..1). Default 0 — any non-zero pump activity counts.
+   */
+  dutyCycleThreshold: number
   /** System is considered LOW PRESSURE when `pressMin` is at or below this PSI. */
   pressureThreshold: number
 }
@@ -34,15 +47,15 @@ export interface StatsThresholds {
 /**
  * Sensible defaults for a typical residential well-pump system.
  *
- *  - currentThreshold 0.5 A: clearly separates a running pump (several Amps RMS)
- *    from idle leakage / sensor noise (≈0.1 A).
+ *  - dutyCycleThreshold 0: any non-zero pump activity in a row counts as ON.
+ *    Raise to e.g. 0.01 to filter sensor noise / brief transients if needed.
  *  - pressureThreshold 30 PSI: a standard cut-in pressure; dipping to/below it
  *    indicates the system is struggling to keep up (a low-pressure condition).
  *
  * Both can be overridden per-request via query parameters.
  */
 export const DEFAULT_STATS_THRESHOLDS: StatsThresholds = {
-  currentThreshold: 0.5,
+  dutyCycleThreshold: 0,
   pressureThreshold: 30,
 }
 
@@ -54,8 +67,11 @@ export interface StatsRow {
   startTime: Date | string | number
   /** End of the sampling window. */
   endTime: Date | string | number
-  /** Representative RMS current for the pump circuit (Amps). */
-  current1RMS: number
+  /**
+   * Fraction (0..1) of the sampling window the pump was actually running, as
+   * classified by the ESP32. Drives both run detection and runtime accrual.
+   */
+  dutyCycle1: number
   /** Minimum pressure observed in the window (PSI). */
   pressMin: number
   /**
@@ -146,10 +162,14 @@ function orderKey(row: StatsRow): number {
  * Reference implementation of the stats derivation, operating on in-memory rows.
  *
  * Rows are grouped by device, ordered chronologically, and walked once. A row is
- * "pump on" when `current1RMS >= currentThreshold` and "low pressure" when
+ * "pump on" when `dutyCycle1 > dutyCycleThreshold` and "low pressure" when
  * `pressMin <= pressureThreshold`. Each off→on edge increments the run count and
- * each normal→low edge increments the low-pressure event count; total durations
- * accumulate the window span of every row found in the respective state.
+ * each normal→low edge increments the low-pressure event count.
+ *
+ * Pump runtime accrues `dutyCycle1 × windowSeconds` per row — the actual time
+ * the pump ran during that minute, not the full window — so a row with a 40%
+ * duty cycle over a 60s window contributes 24s, not 60s. Low-pressure duration
+ * still accrues the full window span of every low row.
  *
  * This mirrors the SQL executed by `/api/stats` exactly. It is used directly by
  * the test-suite and is safe to call from server code as a fallback.
@@ -158,7 +178,7 @@ export function computeStatsFromRows(
   rows: readonly StatsRow[],
   thresholds: StatsThresholds = DEFAULT_STATS_THRESHOLDS,
 ): AggregatedStats {
-  const { currentThreshold, pressureThreshold } = thresholds
+  const { dutyCycleThreshold, pressureThreshold } = thresholds
 
   const totals: RawStatTotals = {
     pumpRunCount: 0,
@@ -184,13 +204,13 @@ export function computeStatsFromRows(
     let prevLowPress = false
 
     for (const row of ordered) {
-      const pumpOn = row.current1RMS >= currentThreshold
+      const pumpOn = row.dutyCycle1 > dutyCycleThreshold
       const lowPress = row.pressMin <= pressureThreshold
       const seconds = windowSeconds(row)
 
       if (pumpOn) {
         if (!prevPumpOn) totals.pumpRunCount += 1
-        totals.pumpDurationSeconds += seconds
+        totals.pumpDurationSeconds += row.dutyCycle1 * seconds
       }
 
       if (lowPress) {

@@ -13,8 +13,8 @@ import {
   type StatsRow,
 } from '@/lib/stats'
 
-// One row per "minute". A pump-on row carries running current; off rows are idle.
-// Pressure stays normal unless explicitly set low.
+// One row per "minute". A pump-on row carries a non-zero dutyCycle1; off rows
+// have dutyCycle1 = 0. Pressure stays normal unless explicitly set low.
 const MINUTE = 60 * 1000
 const BASE = Date.parse('2026-01-01T00:00:00.000Z')
 
@@ -24,13 +24,16 @@ function row(minute: number, overrides: Partial<StatsRow> = {}): StatsRow {
     timestamp: startTime + MINUTE,
     startTime,
     endTime: startTime + MINUTE, // 60s window
-    current1RMS: 0.1, // idle by default
+    dutyCycle1: 0, // idle by default
     pressMin: 45, // normal by default
     ...overrides,
   }
 }
 
-const ON = { current1RMS: 4.2 }
+// Default ON = pump ran for the full minute (duty 1.0), so each on-row accrues
+// 60s of runtime. Individual tests can override dutyCycle1 to model partial
+// duty windows.
+const ON = { dutyCycle1: 1.0 }
 const LOW = { pressMin: 22 }
 
 describe('computeStatsFromRows', () => {
@@ -113,10 +116,13 @@ describe('computeStatsFromRows', () => {
     expect(stats.lowPressureDurationSeconds).toBe(60)
   })
 
-  it('treats values exactly at the threshold as in-state (inclusive bounds)', () => {
+  it('treats pressure exactly at the threshold as low (inclusive bound)', () => {
+    // Pump uses a strict `>` comparison: dutyCycle1 must exceed the threshold.
+    // Default threshold 0 + any non-zero duty registers as on; here we pick a
+    // tiny positive value so the row clearly counts as a run.
     const rows = [
       row(0, {
-        current1RMS: DEFAULT_STATS_THRESHOLDS.currentThreshold, // exactly on
+        dutyCycle1: 0.01,
         pressMin: DEFAULT_STATS_THRESHOLDS.pressureThreshold, // exactly low
       }),
     ]
@@ -151,19 +157,33 @@ describe('computeStatsFromRows', () => {
   })
 
   it('respects custom thresholds', () => {
-    // With a high current threshold, a modest current no longer counts as on.
-    const rows = [row(0, { current1RMS: 1.0 }), row(1, { current1RMS: 1.0 })]
+    // With a high duty-cycle threshold, a brief activation no longer counts.
+    const rows = [row(0, { dutyCycle1: 0.05 }), row(1, { dutyCycle1: 0.05 })]
     const strict = computeStatsFromRows(rows, {
-      currentThreshold: 2.0,
+      dutyCycleThreshold: 0.1,
       pressureThreshold: 30,
     })
     expect(strict.pumpRunCount).toBe(0)
 
     const lenient = computeStatsFromRows(rows, {
-      currentThreshold: 0.5,
+      dutyCycleThreshold: 0,
       pressureThreshold: 30,
     })
     expect(lenient.pumpRunCount).toBe(1)
+  })
+
+  it('accrues runtime proportional to dutyCycle1, not the full window', () => {
+    // Three minute-long windows, each with the pump running 40% of the time.
+    // Total runtime = 3 × 60s × 0.4 = 72s; all three rows form one continuous run.
+    const rows = [
+      row(0, { dutyCycle1: 0.4 }),
+      row(1, { dutyCycle1: 0.4 }),
+      row(2, { dutyCycle1: 0.4 }),
+    ]
+    const stats = computeStatsFromRows(rows)
+    expect(stats.pumpRunCount).toBe(1)
+    expect(stats.pumpDurationSeconds).toBe(72)
+    expect(stats.averagePumpRunSeconds).toBe(72)
   })
 
   it('ignores non-positive window spans (clock skew / zero-length windows)', () => {

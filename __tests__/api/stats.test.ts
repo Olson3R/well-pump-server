@@ -126,7 +126,7 @@ describe('GET /api/stats', () => {
     const response = await GET(new NextRequest(url()))
     const data = await response.json()
 
-    expect(data.thresholds).toEqual({ currentThreshold: 0.5, pressureThreshold: 30 })
+    expect(data.thresholds).toEqual({ dutyCycleThreshold: 0, pressureThreshold: 30 })
   })
 
   it('binds date range, device and custom thresholds into the query', async () => {
@@ -138,7 +138,7 @@ describe('GET /api/stats', () => {
       new NextRequest(
         url(
           `?startDate=${startDate}&endDate=${endDate}&device=well-pump-monitor` +
-            `&currentThreshold=1.5&pressureThreshold=25`
+            `&dutyCycleThreshold=0.05&pressureThreshold=25`
         )
       )
     )
@@ -146,7 +146,7 @@ describe('GET /api/stats', () => {
 
     const values = boundValues()
     // Thresholds appear first (in the CTE), then the WHERE bindings.
-    expect(values).toContain(1.5)
+    expect(values).toContain(0.05)
     expect(values).toContain(25)
     expect(values).toContain('well-pump-monitor')
     expect(values.some((v) => v instanceof Date && v.toISOString() === startDate)).toBe(true)
@@ -157,7 +157,7 @@ describe('GET /api/stats', () => {
       endDate,
       device: 'well-pump-monitor',
     })
-    expect(data.thresholds).toEqual({ currentThreshold: 1.5, pressureThreshold: 25 })
+    expect(data.thresholds).toEqual({ dutyCycleThreshold: 0.05, pressureThreshold: 25 })
   })
 
   it('does not bind a device filter when none is given', async () => {
@@ -166,7 +166,7 @@ describe('GET /api/stats', () => {
     await GET(new NextRequest(url()))
 
     // Only the two thresholds should be bound — no date/device params.
-    expect(boundValues()).toEqual([0.5, 30])
+    expect(boundValues()).toEqual([0, 30])
   })
 
   describe('validation', () => {
@@ -196,11 +196,11 @@ describe('GET /api/stats', () => {
       expect(data.error).toContain('startDate must be before endDate')
     })
 
-    it('rejects a negative currentThreshold', async () => {
-      const response = await GET(new NextRequest(url('?currentThreshold=-1')))
+    it('rejects a negative dutyCycleThreshold', async () => {
+      const response = await GET(new NextRequest(url('?dutyCycleThreshold=-1')))
       const data = await response.json()
       expect(response.status).toBe(400)
-      expect(data.error).toContain('Invalid currentThreshold')
+      expect(data.error).toContain('Invalid dutyCycleThreshold')
     })
 
     it('rejects a non-numeric pressureThreshold', async () => {

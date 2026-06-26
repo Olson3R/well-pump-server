@@ -24,10 +24,11 @@ import {
  * scalars are ever returned, regardless of how many rows the range spans.
  *
  * Query params (all optional):
- *   startDate, endDate   ISO timestamps bounding the range (inclusive).
- *   device               restrict to a single device.
- *   currentThreshold     Amps; pump considered ON at/above this (default 0.5).
- *   pressureThreshold    PSI; low pressure at/below this (default 30).
+ *   startDate, endDate    ISO timestamps bounding the range (inclusive).
+ *   device                restrict to a single device.
+ *   dutyCycleThreshold    Fraction 0..1; row is pump-ON when `dutyCycle1` is
+ *                         strictly greater than this (default 0).
+ *   pressureThreshold     PSI; low pressure at/below this (default 30).
  */
 export async function GET(request: NextRequest) {
   try {
@@ -60,13 +61,13 @@ export async function GET(request: NextRequest) {
     }
 
     // --- Parse / validate thresholds ----------------------------------------
-    const currentThreshold = parseThreshold(
-      searchParams.get('currentThreshold'),
-      DEFAULT_STATS_THRESHOLDS.currentThreshold
+    const dutyCycleThreshold = parseThreshold(
+      searchParams.get('dutyCycleThreshold'),
+      DEFAULT_STATS_THRESHOLDS.dutyCycleThreshold
     )
-    if (currentThreshold === null) {
+    if (dutyCycleThreshold === null) {
       return NextResponse.json(
-        { error: 'Invalid currentThreshold: must be a non-negative number' },
+        { error: 'Invalid dutyCycleThreshold: must be a non-negative number' },
         { status: 400 }
       )
     }
@@ -90,17 +91,20 @@ export async function GET(request: NextRequest) {
     `
 
     // --- Single windowed aggregation query ----------------------------------
-    // `base`    classifies each row as pump-on / low-pressure and measures its
+    // `base`    classifies each row as pump-on (dutyCycle1 > threshold) and
+    //           low-pressure, captures the row's duty cycle, and measures its
     //           window span (seconds, clamped at 0).
     // `flagged` looks back one row PER DEVICE to find state transitions.
-    // The final SELECT counts rising edges and sums durations in one pass.
-    // This mirrors `computeStatsFromRows` in @/lib/stats exactly.
+    // The final SELECT counts rising edges; pump duration sums
+    // `dutyCycle1 × window_seconds` so we accrue ACTUAL seconds the pump ran
+    // rather than full minute windows. Mirrors `computeStatsFromRows` exactly.
     const rawRows = await prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
       WITH base AS (
         SELECT
           device,
           timestamp,
-          ("current1RMS" >= ${currentThreshold}) AS pump_on,
+          "dutyCycle1" AS duty_cycle_1,
+          ("dutyCycle1" > ${dutyCycleThreshold}) AS pump_on,
           ("pressMin" <= ${pressureThreshold}) AS low_press,
           GREATEST(EXTRACT(EPOCH FROM ("endTime" - "startTime")), 0) AS window_seconds
         FROM sensor_data
@@ -110,6 +114,7 @@ export async function GET(request: NextRequest) {
         SELECT
           pump_on,
           low_press,
+          duty_cycle_1,
           window_seconds,
           LAG(pump_on) OVER (PARTITION BY device ORDER BY timestamp) AS prev_pump_on,
           LAG(low_press) OVER (PARTITION BY device ORDER BY timestamp) AS prev_low_press
@@ -117,7 +122,7 @@ export async function GET(request: NextRequest) {
       )
       SELECT
         COUNT(*) FILTER (WHERE pump_on AND prev_pump_on IS DISTINCT FROM TRUE) AS pump_run_count,
-        COALESCE(SUM(window_seconds) FILTER (WHERE pump_on), 0) AS pump_duration_seconds,
+        COALESCE(SUM(duty_cycle_1 * window_seconds) FILTER (WHERE pump_on), 0) AS pump_duration_seconds,
         COUNT(*) FILTER (WHERE low_press AND prev_low_press IS DISTINCT FROM TRUE) AS low_pressure_count,
         COALESCE(SUM(window_seconds) FILTER (WHERE low_press), 0) AS low_pressure_duration_seconds,
         COUNT(*) AS sample_count
@@ -140,7 +145,7 @@ export async function GET(request: NextRequest) {
         endDate: end ? end.toISOString() : null,
         device: device ?? null,
       },
-      thresholds: { currentThreshold, pressureThreshold },
+      thresholds: { dutyCycleThreshold, pressureThreshold },
     })
   } catch (error) {
     console.error('Error computing stats:', error)

@@ -17,8 +17,8 @@ jest.mock('bcryptjs', () => ({
   compare: jest.fn(),
 }))
 
-const mockPrisma = prisma as jest.Mocked<typeof prisma>
-const mockBcrypt = bcrypt as jest.Mocked<typeof bcrypt>
+const mockPrisma = prisma as unknown as DeepMocked<typeof prisma>
+const mockBcrypt = bcrypt as unknown as DeepMocked<typeof bcrypt>
 
 describe('Auth Configuration', () => {
   beforeEach(() => {

@@ -50,7 +50,7 @@ jest.mock('@/lib/notifications', () => ({
   }),
 }))
 
-const mockPrisma = prisma as jest.Mocked<typeof prisma>
+const mockPrisma = prisma as unknown as DeepMocked<typeof prisma>
 
 describe('Data Flow Integration Tests', () => {
   beforeEach(() => {
@@ -174,8 +174,7 @@ describe('Data Flow Integration Tests', () => {
       .mockResolvedValueOnce(5) // Total events
     mockPrisma.user.count.mockResolvedValue(2)
 
-    const healthRequest = new NextRequest('http://localhost:3000/api/health')
-    const healthResponse = await healthGet(healthRequest)
+    const healthResponse = await healthGet()
     const healthResult = await healthResponse.json()
 
     expect(healthResponse.status).toBe(200)
@@ -197,8 +196,7 @@ describe('Data Flow Integration Tests', () => {
       .mockResolvedValueOnce(0) // No total events
     mockPrisma.user.count.mockResolvedValue(1)
 
-    const healthRequest = new NextRequest('http://localhost:3000/api/health')
-    const healthResponse = await healthGet(healthRequest)
+    const healthResponse = await healthGet()
     const healthResult = await healthResponse.json()
 
     expect(healthResponse.status).toBe(200)
@@ -269,8 +267,7 @@ describe('Data Flow Integration Tests', () => {
       .mockResolvedValueOnce(10) // Total events
     mockPrisma.user.count.mockResolvedValue(1)
 
-    const healthRequest = new NextRequest('http://localhost:3000/api/health')
-    const healthResponse = await healthGet(healthRequest)
+    const healthResponse = await healthGet()
     const healthResult = await healthResponse.json()
 
     expect(healthResult.status).toBe('warning') // 2 events = warning (< 5)
@@ -323,8 +320,7 @@ describe('Data Flow Integration Tests', () => {
     // Health check also fails
     mockPrisma.$queryRaw.mockRejectedValue(new Error('Database connection failed'))
 
-    const healthRequest = new NextRequest('http://localhost:3000/api/health')
-    const healthResponse = await healthGet(healthRequest)
+    const healthResponse = await healthGet()
     const healthResult = await healthResponse.json()
 
     expect(healthResponse.status).toBe(503)

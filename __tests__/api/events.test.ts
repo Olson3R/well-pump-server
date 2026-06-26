@@ -43,7 +43,7 @@ jest.mock('@/lib/notifications', () => ({
   }),
 }))
 
-const mockPrisma = prisma as jest.Mocked<typeof prisma>
+const mockPrisma = prisma as unknown as DeepMocked<typeof prisma>
 
 describe('/api/events', () => {
   beforeEach(() => {

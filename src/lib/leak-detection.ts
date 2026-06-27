@@ -1,54 +1,51 @@
 /**
- * Detection of pressure always-dropping during a sustained pump-off window.
+ * Leak detection via pressure drop *rate* during a pump-off segment.
  *
- * Water leaving the system when the pump isn't replenishing it means it's
- * going *somewhere* — either through an open fixture (running toilet, outdoor
- * hose, dripping faucet) or a real leak. The signature we're after is: across
- * a long pump-off window, pressure trends consistently downward at a rate
- * exceeding normal idle drift, rather than dropping in one discrete step from
- * a one-off use.
+ * The earlier "always-dropping over 3 hours" check couldn't fire on real-world
+ * leaks because a leak fast enough to matter often cycles the pump every
+ * 2–3 hours. There's never a 3-hour pump-off window — the pump keeps topping
+ * up. But within each pump-off segment, the slope itself is the signal:
  *
- * Algorithm (quarter-bucket monotonicity over the whole window):
- *   1. Take all sensor rows within the last `windowMinutes`.
- *   2. Require pump-off (dutyCycle1 == 0) for every row in the window — a
- *      single pump cycle aborts the evaluation. Mid-window cycling is normal
- *      under heavy use and not what this detector is for.
- *   3. Require the latest row to be fresh (< 5 min stale) and the window to
- *      be ≥90% covered by data.
- *   4. Split the window into 4 quarter-buckets by time and average pressMin
- *      within each. Bucketing smooths per-sample sensor jitter.
- *   5. Reject if any bucket is significantly higher than the previous one —
- *      pressure recovered, so it isn't actually "always dropping".
- *   6. Require at least 2 of 3 bucket transitions to show a meaningful drop
- *      (≥ small tolerance). This forces the decline to be DISTRIBUTED across
- *      the window, which is what distinguishes a leak from a one-off use
- *      (bathtub fill, etc.) that produces a single step then a flat tail.
- *   7. Require the cumulative drop (first bucket avg − last bucket avg) to
- *      meet the configured `minPsiDrop`.
+ *   - tight residential well system, idle: pressure drift ≪ 0.5 PSI/h
+ *     (thermal + sensor noise)
+ *   - leak / running fixture: 3–20 PSI/h, depending on rate
  *
- * Why bucketed + monotonicity beats raw-window drop:
- *   - A bathtub at minute 60 of a 180-minute window would pass a naive
- *     "first vs last" comparison; the step+flat profile only fails the
- *     "at least 2 of 3 transitions drop" requirement.
- *   - Sensor jitter on the order of 0.1–0.2 PSI doesn't trip the per-bucket
- *     check because the bucket itself averages many samples.
- *   - A leak slow enough to dodge the pump (the only kind worth alerting on
- *     here, since faster leaks present as pump cycling) accrues consistently
- *     bucket over bucket, even at 0.5–1 PSI per hour.
+ * The 60-min minimum segment length is just enough samples to compute a stable
+ * linear-regression slope without overweighting one noisy reading; the rate
+ * threshold (PSI/h) is what actually distinguishes a leak from quiet drift.
+ *
+ * Algorithm:
+ *   1. Walk back from the latest sensor row to the most recent pump-on row.
+ *      The "current pump-off segment" is everything after that.
+ *   2. Require the segment to be ≥ minSegmentMinutes long and end in a
+ *      fresh row (< 5 min stale).
+ *   3. Run a least-squares linear regression of pressMin on time across the
+ *      segment, in PSI per hour. Linear regression is robust to per-sample
+ *      noise and to small mid-segment dips from one-off usage events that
+ *      don't trigger pump cycling.
+ *   4. If the resulting drop rate (= −slope) exceeds the configured PSI/h
+ *      threshold, fire.
+ *
+ * This generalises the previous detector: a slow leak that *would* have shown
+ * up as "always dropping over 3h" trivially fits — its drop rate over the
+ * 3h pump-off segment is well above the rate threshold. But it also catches
+ * the fast leaks that cycle the pump within a couple hours, which the prior
+ * window-based check missed entirely.
  */
 import { prisma } from '@/lib/prisma'
 import { dispatchEventNotifications } from '@/lib/notifications'
 
 /**
- * Defaults — a 3-hour window catches the slow-leak / dripping-fixture cases
- * that don't trip pump cycling; a 2-PSI minimum drop comfortably exceeds
- * thermal drift across that window for a typical pump house.
+ * Defaults. 2 PSI/h is well above the noise floor of a tight residential
+ * system (which drifts at most ~0.5 PSI/h from temperature + sensor noise)
+ * and well below the rate of any leak worth alerting on. 60-min minimum
+ * segment length gives ~60 samples for a stable slope estimate.
  */
-export const DEFAULT_PRESSURE_DROP_PSI = 2
-export const DEFAULT_PRESSURE_DROP_MINUTES = 180
+export const DEFAULT_PRESSURE_DROP_RATE_PSI_PER_HOUR = 2
+export const DEFAULT_PRESSURE_DROP_SEGMENT_MINUTES = 60
 
-export const PRESSURE_DROP_PSI_KEY = 'pressureDropThresholdPsi'
-export const PRESSURE_DROP_MINUTES_KEY = 'pressureDropDurationMinutes'
+export const PRESSURE_DROP_RATE_KEY = 'pressureDropMaxPsiPerHour'
+export const PRESSURE_DROP_SEGMENT_KEY = 'pressureDropMinSegmentMinutes'
 
 /** A row counts as "pump on" when it has any non-zero duty cycle. */
 const PUMP_ON_DUTY_CYCLE = 0
@@ -56,47 +53,11 @@ const PUMP_ON_DUTY_CYCLE = 0
 /** Required freshness of the most recent row to consider the result actionable. */
 const STALE_LATEST_MS = 5 * 60 * 1000
 
-/** Window must be at least this fraction covered by data (no big gaps at the start). */
-const MIN_WINDOW_COVERAGE = 0.9
-
-/**
- * Split the window into this many equal-time buckets for trend analysis.
- * 6 buckets over a 3-hour window = 30-min buckets, which keeps a single
- * discrete-use event localized to one bucket (and therefore one or two
- * transitions) rather than smearing across multiple buckets.
- */
-const BUCKET_COUNT = 6
-
-/**
- * A bucket-to-bucket transition counts as a "meaningful drop" when the next
- * bucket's average is at least this many PSI lower. Set just above sensor
- * jitter so noise doesn't masquerade as a drop.
- */
-const BUCKET_DROP_TOLERANCE_PSI = 0.2
-
-/**
- * Any bucket more than this many PSI higher than the previous bucket aborts
- * the evaluation — pressure recovered partway through the window, which is
- * incompatible with "always dropping". Tuned to allow modest thermal drift
- * (a sunny afternoon can warm a pump house by a couple of PSI) while still
- * catching real recovery.
- */
-const BUCKET_RISE_REJECT_PSI = 1.0
-
-/**
- * Minimum number of bucket-to-bucket transitions that must show a meaningful
- * drop. With 6 buckets there are 5 transitions; requiring 4 of 5 forces the
- * decline to be DISTRIBUTED across the window. A bathtub-style single step
- * only affects one or two transitions, so it can't clear this bar — only a
- * leak that bleeds pressure continuously can.
- */
-const REQUIRED_DROPPING_TRANSITIONS = BUCKET_COUNT - 2
-
 export interface PressureDropThresholds {
-  /** Minimum total drop across the bucket averages (PSI). */
-  minPsiDrop: number
-  /** Length of the evaluation window (minutes). */
-  minDurationMinutes: number
+  /** Drop rate (PSI per hour) at or above which to fire. */
+  maxDropRatePsiPerHour: number
+  /** Minimum pump-off segment length to evaluate (minutes). */
+  minSegmentMinutes: number
 }
 
 export interface DetectPressureDropRow {
@@ -107,111 +68,98 @@ export interface DetectPressureDropRow {
 }
 
 export interface PressureDropResult {
-  /** Average pressMin of the first quarter-bucket. */
+  /** Drop rate over the segment, PSI/h. Positive when pressure is dropping. */
+  dropRatePsiPerHour: number
+  /** Length of the segment evaluated (minutes). */
+  segmentMinutes: number
+  /** pressMin of the segment's first row. */
   startPsi: number
-  /** Average pressMin of the last quarter-bucket. */
+  /** pressMin of the segment's last row. */
   endPsi: number
-  /** startPsi − endPsi (PSI). */
-  dropPsi: number
-  /** Wall-clock width of the evaluated window in minutes. */
-  durationMinutes: number
-  /** Per-bucket averages, oldest → newest (diagnostic). */
-  bucketAverages: number[]
-  /** Start of the evaluation window (epoch ms). */
-  startMs: number
+  /** Segment start (epoch ms). */
+  segmentStartMs: number
 }
 
 /**
- * Walk a chronologically-ordered batch of recent rows for one device and
- * decide whether the configured window shows pressure consistently dropping.
- * Pure: no I/O, exported for testing.
+ * Centred least-squares slope. Centring on the mean of x avoids the float
+ * precision pitfalls of running the textbook formula on epoch-ms x-values.
+ * Returns 0 when there isn't enough variance to fit a line.
+ */
+function slope(points: ReadonlyArray<{ x: number; y: number }>): number {
+  const n = points.length
+  if (n < 2) return 0
+  let meanX = 0
+  let meanY = 0
+  for (const p of points) {
+    meanX += p.x
+    meanY += p.y
+  }
+  meanX /= n
+  meanY /= n
+  let num = 0
+  let den = 0
+  for (const p of points) {
+    const dx = p.x - meanX
+    num += dx * (p.y - meanY)
+    den += dx * dx
+  }
+  if (den === 0) return 0
+  return num / den
+}
+
+/**
+ * Decide whether the current pump-off segment shows a drop rate above the
+ * configured threshold. Pure: no I/O, exported for testing.
  */
 export function detectContinuousPressureDrop(
   rows: readonly DetectPressureDropRow[],
   thresholds: PressureDropThresholds,
   now: Date,
 ): PressureDropResult | null {
-  if (thresholds.minPsiDrop <= 0) return null
-  if (thresholds.minDurationMinutes <= 0) return null
-  if (rows.length < BUCKET_COUNT) return null
+  if (rows.length < 2) return null
+  if (thresholds.maxDropRatePsiPerHour <= 0) return null
+  if (thresholds.minSegmentMinutes <= 0) return null
 
-  const windowMs = thresholds.minDurationMinutes * 60 * 1000
-  const windowStartMs = now.getTime() - windowMs
-
-  // Rows whose sampling window intersects the evaluation window.
-  const windowRows = rows.filter(
-    (r) => r.endTime.getTime() >= windowStartMs,
-  )
-  if (windowRows.length < BUCKET_COUNT) return null
-
-  // Pump-off requirement — any cycle disqualifies the window.
-  for (const row of windowRows) {
-    if (row.dutyCycle1 > PUMP_ON_DUTY_CYCLE) return null
-  }
-
-  const latest = windowRows[windowRows.length - 1]
-  // Don't fire on stale data — a long-quiet device could otherwise appear to
-  // have an "always dropping" window indefinitely.
-  if (now.getTime() - latest.endTime.getTime() > STALE_LATEST_MS) return null
-
-  // Window coverage — need data spanning most of the window (the first row's
-  // startTime can be a little later than windowStartMs without invalidating
-  // a 3-hour evaluation).
-  const firstRow = windowRows[0]
-  const coverageMs = latest.endTime.getTime() - firstRow.startTime.getTime()
-  if (coverageMs < windowMs * MIN_WINDOW_COVERAGE) return null
-
-  // Bucket by the midpoint of each row's sampling window so a row that
-  // straddles a boundary lands in exactly one bucket.
-  const bucketWidthMs = windowMs / BUCKET_COUNT
-  const buckets: number[][] = Array.from({ length: BUCKET_COUNT }, () => [])
-  for (const row of windowRows) {
-    const midMs = (row.startTime.getTime() + row.endTime.getTime()) / 2
-    const offset = midMs - windowStartMs
-    if (offset < 0) continue // row starts before our window; skip.
-    const idx = Math.min(
-      BUCKET_COUNT - 1,
-      Math.max(0, Math.floor(offset / bucketWidthMs)),
-    )
-    buckets[idx].push(row.pressMin)
-  }
-
-  // Every bucket needs data — otherwise we can't speak to that quarter of
-  // the window and can't claim "always" anything.
-  if (buckets.some((b) => b.length === 0)) return null
-
-  const avgs = buckets.map(
-    (b) => b.reduce((s, v) => s + v, 0) / b.length,
-  )
-
-  // Reject if any bucket recovers significantly above its predecessor.
-  for (let i = 1; i < avgs.length; i++) {
-    if (avgs[i] > avgs[i - 1] + BUCKET_RISE_REJECT_PSI) return null
-  }
-
-  // Count transitions that show a meaningful drop. Forcing this counts ≥ N−2
-  // distributes the decline across the window — a bathtub-style single step
-  // followed by flat values would only have one dropping transition.
-  let droppingTransitions = 0
-  for (let i = 1; i < avgs.length; i++) {
-    if (avgs[i] <= avgs[i - 1] - BUCKET_DROP_TOLERANCE_PSI) {
-      droppingTransitions += 1
+  // Most recent pump-on row delimits the start of the pump-off segment.
+  let lastPumpOnIdx = -1
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (rows[i].dutyCycle1 > PUMP_ON_DUTY_CYCLE) {
+      lastPumpOnIdx = i
+      break
     }
   }
-  if (droppingTransitions < REQUIRED_DROPPING_TRANSITIONS) return null
 
-  const startPsi = avgs[0]
-  const endPsi = avgs[avgs.length - 1]
-  const dropPsi = startPsi - endPsi
-  if (dropPsi < thresholds.minPsiDrop) return null
+  const segment = rows.slice(lastPumpOnIdx + 1)
+  if (segment.length < 2) return null
+
+  const first = segment[0]
+  const last = segment[segment.length - 1]
+
+  // Don't fire on stale data — a long-quiet device could otherwise appear to
+  // have an "active drop" indefinitely after the leak stopped.
+  if (now.getTime() - last.endTime.getTime() > STALE_LATEST_MS) return null
+
+  // Need enough segment time for a stable slope.
+  const segmentMs = last.endTime.getTime() - first.startTime.getTime()
+  const segmentMinutes = segmentMs / 60000
+  if (segmentMinutes < thresholds.minSegmentMinutes) return null
+
+  const points = segment.map((r) => ({
+    x: r.startTime.getTime(),
+    y: r.pressMin,
+  }))
+  const slopePsiPerMs = slope(points)
+  // Slope is negative when pressure is dropping; flip to a positive rate.
+  const dropRatePsiPerHour = -slopePsiPerMs * 3_600_000
+
+  if (dropRatePsiPerHour < thresholds.maxDropRatePsiPerHour) return null
 
   return {
-    startPsi,
-    endPsi,
-    dropPsi,
-    durationMinutes: coverageMs / 60000,
-    bucketAverages: avgs,
-    startMs: firstRow.startTime.getTime(),
+    dropRatePsiPerHour,
+    segmentMinutes,
+    startPsi: first.pressMin,
+    endPsi: last.pressMin,
+    segmentStartMs: first.startTime.getTime(),
   }
 }
 
@@ -222,7 +170,7 @@ export function detectContinuousPressureDrop(
 export async function getPressureDropThresholds(): Promise<PressureDropThresholds> {
   try {
     const rows = await prisma.systemSettings.findMany({
-      where: { key: { in: [PRESSURE_DROP_PSI_KEY, PRESSURE_DROP_MINUTES_KEY] } },
+      where: { key: { in: [PRESSURE_DROP_RATE_KEY, PRESSURE_DROP_SEGMENT_KEY] } },
     })
     const byKey = new Map(rows.map((r) => [r.key, r.value]))
 
@@ -234,30 +182,30 @@ export async function getPressureDropThresholds(): Promise<PressureDropThreshold
     }
 
     return {
-      minPsiDrop: parse(
-        byKey.get(PRESSURE_DROP_PSI_KEY),
-        DEFAULT_PRESSURE_DROP_PSI,
+      maxDropRatePsiPerHour: parse(
+        byKey.get(PRESSURE_DROP_RATE_KEY),
+        DEFAULT_PRESSURE_DROP_RATE_PSI_PER_HOUR,
       ),
-      minDurationMinutes: parse(
-        byKey.get(PRESSURE_DROP_MINUTES_KEY),
-        DEFAULT_PRESSURE_DROP_MINUTES,
+      minSegmentMinutes: parse(
+        byKey.get(PRESSURE_DROP_SEGMENT_KEY),
+        DEFAULT_PRESSURE_DROP_SEGMENT_MINUTES,
       ),
     }
   } catch (error) {
     console.error('[leak-detection] failed to read thresholds:', error)
     return {
-      minPsiDrop: DEFAULT_PRESSURE_DROP_PSI,
-      minDurationMinutes: DEFAULT_PRESSURE_DROP_MINUTES,
+      maxDropRatePsiPerHour: DEFAULT_PRESSURE_DROP_RATE_PSI_PER_HOUR,
+      minSegmentMinutes: DEFAULT_PRESSURE_DROP_SEGMENT_MINUTES,
     }
   }
 }
 
 /**
- * Run leak detection for the given device and reconcile the result against
- * any existing active PRESSURE_DROP event:
+ * Run leak detection for the given device and reconcile against any existing
+ * active PRESSURE_DROP event:
  *  - Drop detected + no existing -> create + notify
  *  - Drop detected + existing    -> update value/duration silently
- *  - No drop + existing          -> resolve (pump cycled or pressure recovered)
+ *  - No drop + existing          -> resolve (pump cycled / rate fell back)
  * Never throws.
  */
 export async function checkAndRecordPressureDrop(
@@ -267,11 +215,17 @@ export async function checkAndRecordPressureDrop(
 ): Promise<void> {
   try {
     const thresholds = await getPressureDropThresholds()
-    if (thresholds.minPsiDrop <= 0 || thresholds.minDurationMinutes <= 0) return
+    if (
+      thresholds.maxDropRatePsiPerHour <= 0 ||
+      thresholds.minSegmentMinutes <= 0
+    ) {
+      return
+    }
 
-    // Look back enough to capture the configured window plus a small buffer.
+    // Pull enough recent data to cover a long pump-off segment. Anything that
+    // hasn't seen a pump cycle in 12 hours can still be assessed.
     const lookbackMs =
-      Math.max(60, thresholds.minDurationMinutes + 15) * 60 * 1000
+      Math.max(120, thresholds.minSegmentMinutes * 4) * 60 * 1000
     const since = new Date(now.getTime() - lookbackMs)
 
     const rows = await prisma.sensorData.findMany({
@@ -293,17 +247,18 @@ export async function checkAndRecordPressureDrop(
 
     if (result) {
       const description =
-        `Pressure trending down ${result.dropPsi.toFixed(1)} PSI over ` +
-        `${Math.round(result.durationMinutes)} min while pump off — ` +
+        `Pressure dropping at ${result.dropRatePsiPerHour.toFixed(1)} PSI/h ` +
+        `(${result.startPsi.toFixed(1)} → ${result.endPsi.toFixed(1)} over ` +
+        `${Math.round(result.segmentMinutes)} min) while pump off — ` +
         `possible leak or open fixture`
-      const startTime = new Date(result.startMs)
+      const startTime = new Date(result.segmentStartMs)
 
       if (existing) {
         await prisma.event.update({
           where: { id: existing.id },
           data: {
             timestamp: now,
-            value: result.dropPsi,
+            value: result.dropRatePsiPerHour,
             duration: BigInt(now.getTime() - existing.startTime.getTime()),
             description,
           },
@@ -315,8 +270,8 @@ export async function checkAndRecordPressureDrop(
             location,
             timestamp: now,
             type: 'PRESSURE_DROP',
-            value: result.dropPsi,
-            threshold: thresholds.minPsiDrop,
+            value: result.dropRatePsiPerHour,
+            threshold: thresholds.maxDropRatePsiPerHour,
             startTime,
             duration: BigInt(now.getTime() - startTime.getTime()),
             active: true,
@@ -328,8 +283,8 @@ export async function checkAndRecordPressureDrop(
             type: 'PRESSURE_DROP',
             device,
             location,
-            value: result.dropPsi,
-            threshold: thresholds.minPsiDrop,
+            value: result.dropRatePsiPerHour,
+            threshold: thresholds.maxDropRatePsiPerHour,
             description,
           })
         } catch (notifyError) {
@@ -340,7 +295,7 @@ export async function checkAndRecordPressureDrop(
         }
       }
     } else if (existing) {
-      // Condition cleared (pump cycled / pressure recovered / no longer dropping).
+      // Condition cleared (pump cycled / rate fell back below threshold).
       await prisma.event.update({
         where: { id: existing.id },
         data: { active: false, timestamp: now },

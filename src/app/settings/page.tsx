@@ -709,49 +709,49 @@ export default function SettingsPage() {
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700">
-                        Pressure Drop Threshold (PSI)
+                        Pressure Drop Rate (PSI/h)
                       </label>
                       <input
                         type="number"
                         step="0.5"
                         value={
-                          systemSettings.pressureDropThresholdPsi !== undefined
-                            ? Number(systemSettings.pressureDropThresholdPsi)
+                          systemSettings.pressureDropMaxPsiPerHour !== undefined
+                            ? Number(systemSettings.pressureDropMaxPsiPerHour)
                             : 2
                         }
                         onChange={(e) => setSystemSettings({
                           ...systemSettings,
-                          pressureDropThresholdPsi: parseFloat(e.target.value)
+                          pressureDropMaxPsiPerHour: parseFloat(e.target.value)
                         })}
                         min="0"
                         className="mt-1 block w-32 border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                       />
                       <p className="mt-1 text-sm text-gray-500">
-                        Minimum total drop across the evaluation window. Default 2 PSI.
+                        Fire when pressure is dropping faster than this rate while pump is off. Normal overnight drift is &lt;1 PSI/h. Default 2.
                       </p>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700">
-                        Pressure Drop Window (minutes)
+                        Minimum Pump-Off Segment (minutes)
                       </label>
                       <input
                         type="number"
                         step="1"
                         value={
-                          systemSettings.pressureDropDurationMinutes !== undefined
-                            ? Number(systemSettings.pressureDropDurationMinutes)
-                            : 180
+                          systemSettings.pressureDropMinSegmentMinutes !== undefined
+                            ? Number(systemSettings.pressureDropMinSegmentMinutes)
+                            : 60
                         }
                         onChange={(e) => setSystemSettings({
                           ...systemSettings,
-                          pressureDropDurationMinutes: parseInt(e.target.value)
+                          pressureDropMinSegmentMinutes: parseInt(e.target.value)
                         })}
                         min="0"
                         max="1440"
                         className="mt-1 block w-32 border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                       />
                       <p className="mt-1 text-sm text-gray-500">
-                        Continuous pump-off window over which pressure must be steadily dropping. Default 180 (3h).
+                        Need at least this much continuous pump-off data before evaluating the rate. Default 60.
                       </p>
                     </div>
                   </div>

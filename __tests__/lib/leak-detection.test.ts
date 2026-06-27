@@ -1,9 +1,10 @@
 /**
  * @jest-environment node
  *
- * Pure tests for the continuous-pressure-drop detector. The DB-backed
- * reconciliation path is left to integration; here we lock in the algorithmic
- * decisions (segment selection, freshness, trailing-window peak, thresholds).
+ * Pure tests for the always-dropping-pressure detector. Exercises bucket
+ * monotonicity, recovery rejection, pump-off requirement, freshness, and
+ * the distinction between continuous decline (leak) and one-off step drops
+ * (a single use event that the detector should not flag).
  */
 import {
   detectContinuousPressureDrop,
@@ -23,90 +24,116 @@ function row(
   return { startTime, endTime, dutyCycle1, pressMin }
 }
 
-const T = { minPsiDrop: 3, minDurationMinutes: 10 }
+/** 3-hour window with a 2 PSI minimum drop — matches production defaults. */
+const T = { minPsiDrop: 2, minDurationMinutes: 180 }
+
+/** Build a `length` minutes-long stream that starts at `startPsi` and decays linearly. */
+function linearDecline(length: number, startPsi: number, totalDropPsi: number) {
+  const rows: DetectPressureDropRow[] = []
+  for (let i = 0; i < length; i++) {
+    rows.push(row(i, startPsi - (totalDropPsi * i) / (length - 1)))
+  }
+  return rows
+}
 
 describe('detectContinuousPressureDrop', () => {
-  it('returns null with no rows', () => {
+  it('returns null with too few rows for bucketing', () => {
     expect(detectContinuousPressureDrop([], T, new Date(BASE))).toBeNull()
   })
 
-  it('fires on a sustained drop while pump is off', () => {
-    // 12 pump-off rows, pressure 50 -> 45 over 12 minutes.
-    const rows: DetectPressureDropRow[] = []
-    for (let i = 0; i < 12; i++) rows.push(row(i, 50 - i * 0.5))
-    const now = new Date(BASE + 12 * MINUTE)
+  it('fires on a steady linear decline across the full window', () => {
+    // 180 rows over 180 minutes, pressure 50 → 47 (3 PSI total).
+    const rows = linearDecline(180, 50, 3)
+    const now = new Date(BASE + 180 * MINUTE)
     const result = detectContinuousPressureDrop(rows, T, now)
     expect(result).not.toBeNull()
-    // Trailing 10-min window starts at minute 1, so peak is 49.5 not 50.
-    expect(result!.dropPsi).toBeCloseTo(5.0, 1)
-    expect(result!.durationMinutes).toBeGreaterThanOrEqual(10)
+    expect(result!.dropPsi).toBeGreaterThanOrEqual(2)
+    expect(result!.bucketAverages.length).toBe(6)
+    // Monotonic bucket averages.
+    for (let i = 1; i < result!.bucketAverages.length; i++) {
+      expect(result!.bucketAverages[i]).toBeLessThan(
+        result!.bucketAverages[i - 1],
+      )
+    }
   })
 
-  it('does not fire when the drop is below the PSI threshold', () => {
-    // 12 pump-off rows but only 1 PSI of total drop.
+  it('does not fire when the total drop is below the PSI threshold', () => {
+    // 1 PSI drop across the whole window — below the 2 PSI minimum.
+    const rows = linearDecline(180, 50, 1)
+    const now = new Date(BASE + 180 * MINUTE)
+    expect(detectContinuousPressureDrop(rows, T, now)).toBeNull()
+  })
+
+  it('rejects a bathtub-style single step (5+ PSI drop concentrated mid-window)', () => {
+    // 180-minute window. Flat at 50 for 60 min, single step drop at minute 60,
+    // flat at 40 for the rest. This is the classic false-positive case for a
+    // naive first-vs-last check; the "distributed drop" rule rejects it.
     const rows: DetectPressureDropRow[] = []
-    for (let i = 0; i < 12; i++) rows.push(row(i, 50 - i * (1 / 11)))
-    const now = new Date(BASE + 12 * MINUTE)
+    for (let i = 0; i < 60; i++) rows.push(row(i, 50))
+    for (let i = 60; i < 180; i++) rows.push(row(i, 40))
+    const now = new Date(BASE + 180 * MINUTE)
     expect(detectContinuousPressureDrop(rows, T, now)).toBeNull()
   })
 
-  it('does not fire when the pump-off segment is shorter than the window', () => {
-    // 6 pump-off rows after a pump cycle — not long enough.
-    const rows = [
-      ...Array.from({ length: 5 }, (_, i) => row(i, 50, 100)),
-      ...Array.from({ length: 6 }, (_, i) => row(5 + i, 50 - i * 1.5)),
-    ]
-    const now = new Date(BASE + 11 * MINUTE)
-    expect(detectContinuousPressureDrop(rows, T, now)).toBeNull()
-  })
-
-  it('does not fire when the most recent row is stale', () => {
+  it('rejects a window where pressure recovers partway through', () => {
+    // Drops 50 → 47 in the first half, recovers to 49 in the second half.
     const rows: DetectPressureDropRow[] = []
-    for (let i = 0; i < 12; i++) rows.push(row(i, 50 - i * 0.5))
-    // 10 minutes have passed since the last sample.
-    const now = new Date(BASE + 22 * MINUTE)
+    for (let i = 0; i < 90; i++) {
+      rows.push(row(i, 50 - (3 * i) / 89))
+    }
+    for (let i = 90; i < 180; i++) {
+      rows.push(row(i, 47 + (2 * (i - 90)) / 89))
+    }
+    const now = new Date(BASE + 180 * MINUTE)
     expect(detectContinuousPressureDrop(rows, T, now)).toBeNull()
   })
 
-  it('considers only the trailing window when picking the peak', () => {
-    // Pressure crashed early then stabilised; latest 10 min show no drop.
-    const rows: DetectPressureDropRow[] = [
-      row(0, 50),
-      row(1, 40), // sharp drop early
-      ...Array.from({ length: 13 }, (_, i) => row(2 + i, 40)),
-    ]
-    const now = new Date(BASE + 15 * MINUTE)
-    // Within the last 10 min, pressure is flat at 40 — no alert.
+  it('rejects the window when the pump cycled at any point', () => {
+    const rows = linearDecline(180, 50, 3)
+    // Inject a single pump-on row in the middle.
+    rows[90] = { ...rows[90], dutyCycle1: 80 }
+    const now = new Date(BASE + 180 * MINUTE)
     expect(detectContinuousPressureDrop(rows, T, now)).toBeNull()
   })
 
-  it('starts a fresh evaluation after a pump cycle', () => {
-    // Long drop, then pump cycled, then only short pump-off afterwards.
-    const rows = [
-      row(0, 50),
-      row(1, 47),
-      row(2, 44),
-      row(3, 41),
-      row(4, 38),
-      row(5, 50, 100), // pump on
-      row(6, 50),
-      row(7, 49),
-      row(8, 49),
-    ]
-    const now = new Date(BASE + 9 * MINUTE)
-    // Post-cycle pump-off segment is only ~3 minutes — too short.
+  it('returns null when the most recent row is stale', () => {
+    const rows = linearDecline(180, 50, 3)
+    const now = new Date(BASE + 200 * MINUTE) // 20 min beyond last sample
     expect(detectContinuousPressureDrop(rows, T, now)).toBeNull()
   })
 
-  it('returns null when the threshold itself is zero/negative', () => {
+  it('returns null when coverage of the window is too sparse', () => {
+    // Only the last 60 minutes have data — first 120 are missing.
     const rows: DetectPressureDropRow[] = []
-    for (let i = 0; i < 12; i++) rows.push(row(i, 50 - i * 0.5))
-    const now = new Date(BASE + 12 * MINUTE)
+    for (let i = 120; i < 180; i++) {
+      rows.push(row(i, 50 - (3 * (i - 120)) / 59))
+    }
+    const now = new Date(BASE + 180 * MINUTE)
+    expect(detectContinuousPressureDrop(rows, T, now)).toBeNull()
+  })
+
+  it('returns null when zero/negative thresholds disable the check', () => {
+    const rows = linearDecline(180, 50, 3)
+    const now = new Date(BASE + 180 * MINUTE)
     expect(
       detectContinuousPressureDrop(rows, { ...T, minPsiDrop: 0 }, now),
     ).toBeNull()
     expect(
       detectContinuousPressureDrop(rows, { ...T, minDurationMinutes: 0 }, now),
     ).toBeNull()
+  })
+
+  it('tolerates a single noisy bucket bump within the rise threshold', () => {
+    // Mostly-linear decline, with mild within-tolerance jitter in one bucket.
+    // Drop ≥ 2 PSI total, two of three transitions still meaningful drops.
+    const rows = linearDecline(180, 50, 3)
+    // Bump a few rows in the third quarter up by 0.5 PSI — well under the
+    // 1.0 PSI rise-reject threshold.
+    for (let i = 100; i < 120; i++) {
+      rows[i] = { ...rows[i], pressMin: rows[i].pressMin + 0.5 }
+    }
+    const now = new Date(BASE + 180 * MINUTE)
+    const result = detectContinuousPressureDrop(rows, T, now)
+    expect(result).not.toBeNull()
   })
 })

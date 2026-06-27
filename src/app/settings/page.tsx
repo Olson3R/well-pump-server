@@ -717,7 +717,7 @@ export default function SettingsPage() {
                         value={
                           systemSettings.pressureDropThresholdPsi !== undefined
                             ? Number(systemSettings.pressureDropThresholdPsi)
-                            : 3
+                            : 2
                         }
                         onChange={(e) => setSystemSettings({
                           ...systemSettings,
@@ -727,7 +727,7 @@ export default function SettingsPage() {
                         className="mt-1 block w-32 border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                       />
                       <p className="mt-1 text-sm text-gray-500">
-                        Fire on a drop of at least this many PSI while pump is off (possible leak/open fixture).
+                        Minimum total drop across the evaluation window. Default 2 PSI.
                       </p>
                     </div>
                     <div>
@@ -740,7 +740,7 @@ export default function SettingsPage() {
                         value={
                           systemSettings.pressureDropDurationMinutes !== undefined
                             ? Number(systemSettings.pressureDropDurationMinutes)
-                            : 10
+                            : 180
                         }
                         onChange={(e) => setSystemSettings({
                           ...systemSettings,
@@ -751,7 +751,7 @@ export default function SettingsPage() {
                         className="mt-1 block w-32 border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                       />
                       <p className="mt-1 text-sm text-gray-500">
-                        Drop must persist for at least this many minutes before firing.
+                        Continuous pump-off window over which pressure must be steadily dropping. Default 180 (3h).
                       </p>
                     </div>
                   </div>

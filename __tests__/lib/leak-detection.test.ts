@@ -125,4 +125,41 @@ describe('detectContinuousPressureDrop', () => {
     expect(result).not.toBeNull()
     expect(result!.dropRatePsiPerHour).toBeGreaterThanOrEqual(2)
   })
+
+  it('rejects a big-drop-then-plateau segment even if the average rate clears the threshold', () => {
+    // 4h segment. Pressure leaks 8 PSI in the first hour, then flat for 3h.
+    // Overall rate is 2 PSI/h (clears the threshold), but the 3-hour flat
+    // tail is a plateau — the leak isn't continuous, so don't alert.
+    const rows: DetectPressureDropRow[] = []
+    for (let i = 0; i < 60; i++) rows.push(row(i, 60 - (8 * i) / 59))
+    for (let i = 60; i < 240; i++) rows.push(row(i, 52))
+    const now = new Date(BASE + 240 * MINUTE)
+    expect(detectContinuousPressureDrop(rows, T, now)).toBeNull()
+  })
+
+  it('rejects a long segment with a sustained plateau in the middle', () => {
+    // 3h segment. Drops 60 → 55 over first hour, plateau at 55 for the
+    // second hour, then drops 55 → 50 in the third hour. Overall rate
+    // would otherwise look like a leak, but the middle plateau means the
+    // pressure isn't continuously dropping.
+    const rows: DetectPressureDropRow[] = []
+    for (let i = 0; i < 60; i++) rows.push(row(i, 60 - (5 * i) / 59))
+    for (let i = 60; i < 120; i++) rows.push(row(i, 55))
+    for (let i = 120; i < 180; i++) rows.push(row(i, 55 - (5 * (i - 120)) / 59))
+    const now = new Date(BASE + 180 * MINUTE)
+    expect(detectContinuousPressureDrop(rows, T, now)).toBeNull()
+  })
+
+  it('still fires on a continuous decline through a single noisy bucket', () => {
+    // 90-min steady leak (4 PSI/h ≈ 6 PSI total), with one 15-min bucket
+    // bumped 0.5 PSI higher to mimic sensor jitter. One isolated flat
+    // bucket is tolerated — we only reject 2+ consecutive plateaus.
+    const rows = linearDecline(90, 55, 6)
+    for (let i = 45; i < 60; i++) {
+      rows[i] = { ...rows[i], pressMin: rows[i].pressMin + 0.5 }
+    }
+    const now = new Date(BASE + 90 * MINUTE)
+    const result = detectContinuousPressureDrop(rows, T, now)
+    expect(result).not.toBeNull()
+  })
 })

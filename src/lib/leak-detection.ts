@@ -53,6 +53,27 @@ const PUMP_ON_DUTY_CYCLE = 0
 /** Required freshness of the most recent row to consider the result actionable. */
 const STALE_LATEST_MS = 5 * 60 * 1000
 
+/**
+ * Plateau check parameters. After confirming the segment-wide drop rate, we
+ * bucket the segment into PLATEAU_BUCKET_MINUTES chunks and verify each
+ * still shows continued decline. A leak loses pressure continuously; a
+ * one-off use leaves a flat tail (and shouldn't alert).
+ *
+ *  - PLATEAU_BUCKET_MINUTES: 15-min buckets give a stable slope estimate
+ *    from ~15 samples while keeping resolution on a 60-min minimum segment.
+ *  - PLATEAU_RATE_FRACTION: each bucket must show at least half the
+ *    threshold rate. Below that the bucket counts as "flat".
+ *  - MAX_CONSECUTIVE_PLATEAU_BUCKETS: tolerate 1 isolated flat bucket
+ *    (sensor noise can flatten a 15-min slope estimate even during a real
+ *    leak). 2+ in a row means a genuine plateau — fail.
+ *  - MIN_BUCKETS_FOR_PLATEAU_CHECK: with fewer than 3 buckets we can't
+ *    distinguish a plateau from a short segment, so skip the check.
+ */
+const PLATEAU_BUCKET_MINUTES = 15
+const PLATEAU_RATE_FRACTION = 0.5
+const MAX_CONSECUTIVE_PLATEAU_BUCKETS = 1
+const MIN_BUCKETS_FOR_PLATEAU_CHECK = 3
+
 export interface PressureDropThresholds {
   /** Drop rate (PSI per hour) at or above which to fire. */
   maxDropRatePsiPerHour: number
@@ -154,6 +175,15 @@ export function detectContinuousPressureDrop(
 
   if (dropRatePsiPerHour < thresholds.maxDropRatePsiPerHour) return null
 
+  // Plateau check: a true leak loses pressure continuously across the segment.
+  // A one-off use (or a leak that has stopped) shows a flat tail that the
+  // segment-wide slope alone can hide. Bucketing exposes those tails.
+  if (
+    !passesPlateauCheck(segment, thresholds.maxDropRatePsiPerHour)
+  ) {
+    return null
+  }
+
   return {
     dropRatePsiPerHour,
     segmentMinutes,
@@ -161,6 +191,69 @@ export function detectContinuousPressureDrop(
     endPsi: last.pressMin,
     segmentStartMs: first.startTime.getTime(),
   }
+}
+
+/**
+ * True iff every PLATEAU_BUCKET_MINUTES bucket in the segment still shows a
+ * meaningful per-bucket drop rate (≥ PLATEAU_RATE_FRACTION × threshold),
+ * tolerating at most MAX_CONSECUTIVE_PLATEAU_BUCKETS isolated flat buckets.
+ * Buckets with too few samples to fit a slope are skipped (they don't count
+ * as plateau OR as drop).
+ *
+ * Skipped entirely when the segment yields fewer than
+ * MIN_BUCKETS_FOR_PLATEAU_CHECK buckets — short segments lean on the rate
+ * check alone.
+ */
+function passesPlateauCheck(
+  segment: readonly DetectPressureDropRow[],
+  thresholdRatePsiPerHour: number,
+): boolean {
+  const bucketWidthMs = PLATEAU_BUCKET_MINUTES * 60 * 1000
+  const buckets = bucketByTime(segment, bucketWidthMs)
+  if (buckets.length < MIN_BUCKETS_FOR_PLATEAU_CHECK) return true
+
+  const minBucketRate = thresholdRatePsiPerHour * PLATEAU_RATE_FRACTION
+  let consecutivePlateaus = 0
+  for (const bucket of buckets) {
+    if (bucket.length < 2) continue // not enough to fit; neither pass nor fail
+    const bucketSlope = slope(
+      bucket.map((r) => ({ x: r.startTime.getTime(), y: r.pressMin })),
+    )
+    const bucketRate = -bucketSlope * 3_600_000
+    if (bucketRate < minBucketRate) {
+      consecutivePlateaus += 1
+      if (consecutivePlateaus > MAX_CONSECUTIVE_PLATEAU_BUCKETS) return false
+    } else {
+      consecutivePlateaus = 0
+    }
+  }
+  return true
+}
+
+/**
+ * Group consecutive rows into fixed-width time buckets starting at the first
+ * row's startTime. Rows that fall entirely past the last bucket boundary
+ * close out the current bucket and open the next; rows are never split
+ * across buckets.
+ */
+function bucketByTime(
+  rows: readonly DetectPressureDropRow[],
+  bucketMs: number,
+): DetectPressureDropRow[][] {
+  if (rows.length === 0) return []
+  const buckets: DetectPressureDropRow[][] = []
+  let current: DetectPressureDropRow[] = []
+  let nextBoundaryMs = rows[0].startTime.getTime() + bucketMs
+  for (const row of rows) {
+    while (row.startTime.getTime() >= nextBoundaryMs) {
+      if (current.length > 0) buckets.push(current)
+      current = []
+      nextBoundaryMs += bucketMs
+    }
+    current.push(row)
+  }
+  if (current.length > 0) buckets.push(current)
+  return buckets
 }
 
 /**
